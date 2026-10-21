@@ -100,6 +100,7 @@ To verify in Python:
 ```python
 import hashlib, hmac, time
 
+
 def verify(secret, raw_body, timestamp, signature):
     if abs(time.time() - int(timestamp)) > 600:
         return False
