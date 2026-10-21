@@ -119,10 +119,16 @@ def save_webhook(data, webhook_id=None):
     if not url.startswith(("http://", "https://")):
         raise services.ServiceError("The address must start with http:// or https://")
     events = data.get("events") or ["*"]
+    if isinstance(events, str):
+        events = [entry.strip() for entry in events.split(",") if entry.strip()]
+    if not isinstance(events, list) or not all(isinstance(entry, str) for entry in events):
+        raise services.ServiceError("Events must be a list of event names")
     unknown = [entry for entry in events if entry != "*" and entry not in EVENT_TYPES]
     if unknown:
         raise services.ServiceError("Unknown event: " + ", ".join(unknown))
     name = (data.get("name") or "").strip() or url
+    if webhook_id and not db.scalar("SELECT 1 FROM webhooks WHERE id = ?", (webhook_id,)):
+        raise services.ServiceError("Webhook not found", 404)
     with db.tx() as c:
         if webhook_id:
             c.execute(
@@ -169,7 +175,7 @@ def events_since(after=0, types=None, limit=200):
         sql += " AND type IN (" + ",".join("?" for _ in wanted) + ")"
         params += wanted
     sql += " ORDER BY id LIMIT ?"
-    params.append(min(int(limit), 500))
+    params.append(max(1, min(int(limit), 500)))
     result = []
     for row in db.rows(sql, params):
         entry = json.loads(row["payload"])
@@ -178,8 +184,8 @@ def events_since(after=0, types=None, limit=200):
     return {"events": result, "last_id": result[-1]["id"] if result else int(after or 0)}
 
 
-def _deliver(hook_id, body):
-    hook = db.row("SELECT * FROM webhooks WHERE id = ? AND active = 1", (hook_id,))
+def _deliver(hook_id, body, force=False):
+    hook = db.row("SELECT * FROM webhooks WHERE id = ? AND (active = 1 OR ?)", (hook_id, 1 if force else 0))
     if not hook:
         return True
     raw = json.dumps(body, default=str).encode("utf-8")
@@ -224,8 +230,10 @@ def delivery_worker(stop_event):
 
 
 def test_webhook(webhook_id):
+    if not db.scalar("SELECT 1 FROM webhooks WHERE id = ?", (webhook_id,)):
+        raise services.ServiceError("Webhook not found", 404)
     body = {"type": "test", "at": services.iso_now(), "data": {"message": "Hello from Pantry"}, "id": 0}
-    ok = _deliver(webhook_id, body)
+    ok = _deliver(webhook_id, body, force=True)
     hook = db.row("SELECT last_status FROM webhooks WHERE id = ?", (webhook_id,))
     return {"ok": ok, "status": hook["last_status"] if hook else None}
 

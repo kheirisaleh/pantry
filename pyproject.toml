@@ -15,7 +15,7 @@ ignore = ["E501", "B008", "SIM108", "SIM102", "SIM105", "B904", "UP035", "C408",
 
 [tool.ruff.lint.isort]
 split-on-trailing-comma = false
-known-first-party = ["app"]
+known-first-party = ["app", "helpers"]
 
 [tool.ruff.format]
 quote-style = "double"

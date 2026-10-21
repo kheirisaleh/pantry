@@ -112,6 +112,15 @@ def _schema(node):
 
 
 _model_blocked = {}
+_model_unavailable = set()
+
+
+def _all_blocked_error():
+    now = time.time()
+    wait = int(min(_model_blocked.values()) - now) + 1
+    if all(name in _model_unavailable for name in models()):
+        return AIError("None of the chosen Gemini models is available. Pick other models in the settings.", retry_after=max(wait, 60))
+    return AIError("Gemini quota reached", retry_after=max(wait, 60))
 
 
 def models():
@@ -150,8 +159,7 @@ def generate(prompt, schema, timeout=90):
     now = time.time()
     available = [name for name in models() if _model_blocked.get(name, 0) <= now]
     if not available:
-        wait = int(min(_model_blocked.values()) - now) + 1
-        raise AIError("Gemini quota reached", retry_after=max(wait, 60))
+        raise _all_blocked_error()
     last_error = None
     body = None
     for name in available:
@@ -167,11 +175,13 @@ def generate(prompt, schema, timeout=90):
             if error.code == 429:
                 wait = _retry_seconds(detail, 600)
                 _model_blocked[name] = time.time() + wait
+                _model_unavailable.discard(name)
                 log.warning("Gemini model %s quota reached, blocked for %s seconds", name, wait)
                 last_error = AIError("Gemini quota reached", retry_after=min(wait, MAX_BACKOFF))
                 continue
             if error.code == 404:
                 _model_blocked[name] = time.time() + 86400
+                _model_unavailable.add(name)
                 last_error = AIError("Gemini model " + name + " not available", retry_after=60)
                 continue
             if error.code >= 500:
@@ -187,8 +197,7 @@ def generate(prompt, schema, timeout=90):
         if any(_model_blocked.get(name, 0) > time.time() for name in available) and all(
             _model_blocked.get(name, 0) > time.time() for name in models()
         ):
-            wait = int(min(_model_blocked.values()) - time.time()) + 1
-            raise AIError("Gemini quota reached", retry_after=max(wait, 60))
+            raise _all_blocked_error()
         raise last_error or AIError("Gemini returned no answer", retry_after=600)
     candidates = body.get("candidates") or []
     if not candidates:
@@ -517,11 +526,16 @@ def update_settings(data):
         if "api_key" in data:
             db.set_setting("gemini_api_key", (data.get("api_key") or "").strip(), c)
             _model_blocked.clear()
+            _model_unavailable.clear()
             _model_errors.clear()
         if "models" in data:
-            chosen = [entry.strip() for entry in (data.get("models") or []) if entry and entry.strip()]
+            models_value = data.get("models") or []
+            if not isinstance(models_value, list) or not all(isinstance(entry, str) for entry in models_value):
+                raise services.ServiceError("Models must be a list of model names")
+            chosen = [entry.strip() for entry in models_value if entry.strip()]
             db.set_setting("gemini_models", ",".join(chosen), c)
             _model_blocked.clear()
+            _model_unavailable.clear()
         if "enabled" in data:
             db.set_setting("ai_enabled", "1" if data.get("enabled") else "0", c)
     _state["cooldown_until"] = 0
@@ -536,6 +550,7 @@ def test_model(name):
         _call(name, payload, 60)
         _count(name, "ok")
         _model_blocked.pop(name, None)
+        _model_unavailable.discard(name)
         _model_errors.pop(name, None)
         return {"ok": True, "seconds": round(time.time() - started, 1)}
     except urllib.error.HTTPError as error:

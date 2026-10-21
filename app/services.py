@@ -1,11 +1,12 @@
 import json
 import math
+import os
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from . import db, logic, names
 
-TZ = ZoneInfo("Europe/Berlin")
+DEFAULT_TZ = "Europe/Berlin"
 UNITS = ("g", "ml", "pcs")
 
 
@@ -16,7 +17,7 @@ class ServiceError(Exception):
 
 
 def now():
-    return datetime.now(TZ)
+    return datetime.now(zone())
 
 
 def today():
@@ -61,6 +62,51 @@ def check_unit(unit):
     return unit
 
 
+def zone():
+    name = (os.environ.get("TZ") or "").strip() or DEFAULT_TZ
+    try:
+        return ZoneInfo(name)
+    except (ValueError, KeyError):
+        return ZoneInfo(DEFAULT_TZ)
+
+
+def ident(value, label):
+    if isinstance(value, bool):
+        raise ServiceError(label + " is not valid")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as error:
+        raise ServiceError(label + " is not valid") from error
+
+
+def amount_or_none(value, label):
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as error:
+        raise ServiceError(label + " must be a number") from error
+    if number < 0:
+        raise ServiceError(label + " cannot be negative")
+    return number
+
+
+def clean_choices(value):
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, dict):
+        raise ServiceError("Choices must map a slot to an ingredient line")
+    return {str(ident(key, "Slot")): ident(item, "Choice") for key, item in value.items()}
+
+
+def clean_optional(value):
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise ServiceError("Optional items must be a list")
+    return [ident(item, "Optional item") for item in value]
+
+
 def positive(value, label):
     try:
         number = float(value)
@@ -86,6 +132,10 @@ def rename_user(user_id, name, color=None):
     name = (name or "").strip()
     if not name:
         raise ServiceError("Name is required")
+    if not db.scalar("SELECT 1 FROM users WHERE id = ?", (user_id,)):
+        raise ServiceError("Person not found", 404)
+    if db.scalar("SELECT 1 FROM users WHERE name = ? AND id != ?", (name, user_id)):
+        raise ServiceError("Someone else already has this name")
     with db.tx() as c:
         c.execute("UPDATE users SET name = ?, color = COALESCE(?, color) WHERE id = ?", (name, color, user_id))
     return users()
@@ -204,14 +254,34 @@ EDITABLE_INGREDIENT_FIELDS = (
 )
 
 
+NUMBER_INGREDIENT_FIELDS = ("piece_amount", "package_amount", "kcal", "protein", "fat", "carbs", "fiber", "tolerance_pct", "shelf_days")
+KINDS = ("food", "snack", "staple", "household")
+
+
 def update_ingredient(ingredient_id, data):
     current = db.row("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,))
     if not current:
         raise ServiceError("Ingredient not found", 404)
     updates = {key: data[key] for key in EDITABLE_INGREDIENT_FIELDS if key in data}
+    for key in NUMBER_INGREDIENT_FIELDS:
+        if key in updates:
+            updates[key] = amount_or_none(updates[key], key.replace("_", " ").capitalize())
+    if updates.get("shelf_days") is not None:
+        updates["shelf_days"] = int(updates["shelf_days"])
+    if "sold_by_piece" in updates:
+        updates["sold_by_piece"] = 1 if updates["sold_by_piece"] else 0
+    for key in ("name_en", "name_fa", "name_de", "icon"):
+        if key in updates:
+            if updates[key] is not None and not isinstance(updates[key], str):
+                raise ServiceError("Names must be text")
+            updates[key] = (updates[key] or "").strip() or None
+    if "category" in updates and updates["category"] not in CATEGORY_ORDER:
+        raise ServiceError("Unknown category")
+    if "kind" in updates and updates["kind"] not in KINDS:
+        raise ServiceError("Kind must be one of " + ", ".join(KINDS))
     if "unit" in updates:
         check_unit(updates["unit"])
-        if current["unit_locked"] and updates["unit"] != current["unit"]:
+        if updates["unit"] != current["unit"]:
             has_data = db.scalar("SELECT COUNT(*) FROM batches WHERE ingredient_id = ? AND pending_unit IS NULL", (ingredient_id,))
             if has_data:
                 raise ServiceError("The base unit cannot change once stock exists in it")
@@ -360,7 +430,7 @@ def get_recipe(recipe_id):
 
 
 def _write_items(c, recipe_id, slots, user_id):
-    if not slots:
+    if not slots or not isinstance(slots, list) or not all(isinstance(slot, dict) for slot in slots):
         raise ServiceError("A recipe needs at least one ingredient")
     c.execute("DELETE FROM recipe_items WHERE recipe_id = ?", (recipe_id,))
     for slot_index, slot in enumerate(slots):
@@ -373,7 +443,7 @@ def _write_items(c, recipe_id, slots, user_id):
             unit = check_recipe_unit(entry.get("unit") or "g")
             amount = positive(entry.get("amount"), "Amount")
             if entry.get("ingredient_id"):
-                ingredient_id = int(entry["ingredient_id"])
+                ingredient_id = ident(entry["ingredient_id"], "Ingredient")
                 if not db.scalar("SELECT 1 FROM ingredients WHERE id = ?", (ingredient_id,)):
                     raise ServiceError("Unknown ingredient")
             else:
@@ -413,6 +483,8 @@ def update_recipe(recipe_id, data, user_id=None):
     if not recipe:
         raise ServiceError("Recipe not found", 404)
     with db.tx() as c:
+        if data.get("name") is not None and not isinstance(data["name"], str):
+            raise ServiceError("Recipe name must be text")
         if data.get("name") and data["name"].strip() != recipe["raw_name"]:
             c.execute(
                 "UPDATE recipes SET raw_name = ?, status = 'pending', updated_at = datetime('now') WHERE id = ?",
@@ -420,10 +492,17 @@ def update_recipe(recipe_id, data, user_id=None):
             )
             c.execute("DELETE FROM ai_jobs WHERE kind = 'recipe' AND target_id = ?", (recipe_id,))
             enqueue(c, "recipe", recipe_id)
-        for key in ("name_en", "name_fa", "name_de", "description", "cook_minutes"):
+        for key in ("name_en", "name_fa", "name_de", "description"):
             if key in data:
-                c.execute("UPDATE recipes SET " + key + " = ? WHERE id = ?", (data[key], recipe_id))
+                if data[key] is not None and not isinstance(data[key], str):
+                    raise ServiceError("Names and description must be text")
+                c.execute("UPDATE recipes SET " + key + " = ? WHERE id = ?", ((data[key] or "").strip() or None, recipe_id))
+        if "cook_minutes" in data:
+            minutes = amount_or_none(data["cook_minutes"], "Cooking time")
+            c.execute("UPDATE recipes SET cook_minutes = ? WHERE id = ?", (None if minutes is None else int(minutes), recipe_id))
         if "tags" in data:
+            if not isinstance(data["tags"], list):
+                raise ServiceError("Tags must be a list")
             c.execute("UPDATE recipes SET tags = ? WHERE id = ?", (json.dumps([str(tag) for tag in data["tags"]]), recipe_id))
         if "slots" in data:
             planned = db.rows("SELECT id, choices, optional_items FROM meals WHERE recipe_id = ? AND status = 'planned'", (recipe_id,))
@@ -608,7 +687,7 @@ def calendar(start, end):
 
 def add_meal(data, user_id=None):
     meal_date = parse_date(data.get("date"))
-    recipe_id = int(data.get("recipe_id") or 0)
+    recipe_id = ident(data.get("recipe_id") or 0, "Recipe")
     recipe = db.row("SELECT id, archived FROM recipes WHERE id = ?", (recipe_id,))
     if not recipe or recipe["archived"]:
         raise ServiceError("Recipe not found", 404)
@@ -622,8 +701,8 @@ def add_meal(data, user_id=None):
                 position,
                 recipe_id,
                 servings,
-                json.dumps(data.get("choices") or {}),
-                json.dumps(data.get("optional_items") or []),
+                json.dumps(clean_choices(data.get("choices"))),
+                json.dumps(clean_optional(data.get("optional_items"))),
                 user_id,
                 data.get("source") if data.get("source") in SOURCES else "app",
             ),
@@ -647,17 +726,17 @@ def update_meal(meal_id, data):
     if "servings" in data:
         updates["servings"] = positive(data["servings"], "Servings")
     if "recipe_id" in data:
-        if not db.scalar("SELECT 1 FROM recipes WHERE id = ? AND archived = 0", (int(data["recipe_id"]),)):
+        if not db.scalar("SELECT 1 FROM recipes WHERE id = ? AND archived = 0", (ident(data["recipe_id"], "Recipe"),)):
             raise ServiceError("Recipe not found", 404)
         updates["recipe_id"] = int(data["recipe_id"])
         updates["choices"] = "{}"
         updates["optional_items"] = "[]"
     if "choices" in data:
-        updates["choices"] = json.dumps(data["choices"] or {})
+        updates["choices"] = json.dumps(clean_choices(data["choices"]))
     if "optional_items" in data:
-        updates["optional_items"] = json.dumps(data["optional_items"] or [])
+        updates["optional_items"] = json.dumps(clean_optional(data["optional_items"]))
     if "position" in data:
-        updates["position"] = int(data["position"])
+        updates["position"] = ident(data["position"], "Position")
     with db.tx() as c:
         if updates:
             c.execute(
@@ -685,7 +764,7 @@ def move_meal(meal_id, data):
     if meal["status"] == "cooked":
         raise ServiceError("A cooked meal cannot be moved, undo the cooking first")
     target_date = parse_date(data.get("date") or meal["date"]).isoformat()
-    index = max(0, int(data.get("index") or 0))
+    index = max(0, ident(data.get("index") or 0, "Position"))
     with db.tx() as c:
         source_date = meal["date"]
         others = [
@@ -829,28 +908,28 @@ def cook(data, user_id=None):
     roll_forward_meals()
     meal_id = data.get("meal_id")
     if not meal_id and data.get("recipe_id"):
-        found = pool_meal(int(data["recipe_id"]))
+        found = pool_meal(ident(data["recipe_id"], "Recipe"))
         if found:
             meal_id = found["id"]
             data = dict(data, date=data.get("date") or today().isoformat())
     with db.tx() as c:
         if meal_id:
-            meal = db.row("SELECT * FROM meals WHERE id = ?", (int(meal_id),))
+            meal = db.row("SELECT * FROM meals WHERE id = ?", (ident(meal_id, "Meal"),))
             if not meal:
                 raise ServiceError("Meal not found", 404)
             if meal["status"] == "cooked":
                 raise ServiceError("This meal is already cooked")
             updates = {}
-            if data.get("recipe_id") and int(data["recipe_id"]) != meal["recipe_id"]:
-                updates["recipe_id"] = int(data["recipe_id"])
+            if data.get("recipe_id") and ident(data["recipe_id"], "Recipe") != meal["recipe_id"]:
+                updates["recipe_id"] = ident(data["recipe_id"], "Recipe")
                 updates["choices"] = "{}"
                 updates["optional_items"] = "[]"
             if data.get("servings"):
                 updates["servings"] = positive(data["servings"], "Servings")
             if "choices" in data:
-                updates["choices"] = json.dumps(data["choices"] or {})
+                updates["choices"] = json.dumps(clean_choices(data["choices"]))
             if "optional_items" in data:
-                updates["optional_items"] = json.dumps(data["optional_items"] or [])
+                updates["optional_items"] = json.dumps(clean_optional(data["optional_items"]))
             if data.get("date"):
                 updates["date"] = parse_date(data["date"]).isoformat()
             if updates:
@@ -860,7 +939,7 @@ def cook(data, user_id=None):
                 )
             meal = db.row("SELECT * FROM meals WHERE id = ?", (meal["id"],))
         else:
-            recipe_id = int(data.get("recipe_id") or 0)
+            recipe_id = ident(data.get("recipe_id") or 0, "Recipe")
             if not db.scalar("SELECT 1 FROM recipes WHERE id = ? AND archived = 0", (recipe_id,)):
                 raise ServiceError("Recipe not found", 404)
             meal_date = parse_date(data.get("date") or today().isoformat()).isoformat()
@@ -872,8 +951,8 @@ def cook(data, user_id=None):
                     position,
                     recipe_id,
                     positive(data.get("servings") or default_servings(), "Servings"),
-                    json.dumps(data.get("choices") or {}),
-                    json.dumps(data.get("optional_items") or []),
+                    json.dumps(clean_choices(data.get("choices"))),
+                    json.dumps(clean_optional(data.get("optional_items"))),
                     user_id,
                 ),
             )
@@ -881,7 +960,9 @@ def cook(data, user_id=None):
         record = meal_record(meal)
         ingredients = ingredient_map()
         required, unconvertible = logic.meal_requirements(record, recipe_items(meal["recipe_id"]), ingredients)
-        overrides = {int(key): float(value) for key, value in (data.get("overrides") or {}).items()}
+        overrides = {
+            ident(key, "Ingredient"): amount_or_none(value, "Amount") or 0.0 for key, value in (data.get("overrides") or {}).items()
+        }
         for ingredient_id, qty in overrides.items():
             if ingredient_id not in ingredients:
                 continue
@@ -929,21 +1010,23 @@ def cook(data, user_id=None):
 
 
 def cook_preview(meal_id=None, recipe_id=None, servings=None, choices=None, optional_items=None):
+    if not meal_id and not recipe_id:
+        raise ServiceError("Choose a meal or a dish")
     if meal_id:
-        meal = db.row("SELECT * FROM meals WHERE id = ?", (int(meal_id),))
+        meal = db.row("SELECT * FROM meals WHERE id = ?", (ident(meal_id, "Meal"),))
         if not meal:
             raise ServiceError("Meal not found", 404)
         record = meal_record(meal)
     else:
-        record = {"recipe_id": int(recipe_id), "servings": default_servings(), "choices": {}, "optional_items": []}
+        record = {"recipe_id": ident(recipe_id, "Recipe"), "servings": default_servings(), "choices": {}, "optional_items": []}
     if recipe_id:
-        record["recipe_id"] = int(recipe_id)
+        record["recipe_id"] = ident(recipe_id, "Recipe")
     if servings:
-        record["servings"] = float(servings)
+        record["servings"] = positive(servings, "Servings")
     if choices is not None:
-        record["choices"] = choices
+        record["choices"] = clean_choices(choices)
     if optional_items is not None:
-        record["optional_items"] = optional_items
+        record["optional_items"] = clean_optional(optional_items)
     ingredients = ingredient_map()
     required, unconvertible = logic.meal_requirements(record, recipe_items(record["recipe_id"]), ingredients)
     stock = stock_map()
@@ -991,7 +1074,7 @@ def log_snack(data, user_id=None):
     snack_date = parse_date(data.get("date") or today().isoformat()).isoformat()
     with db.tx() as c:
         if data.get("ingredient_id"):
-            ingredient_id = int(data["ingredient_id"])
+            ingredient_id = ident(data["ingredient_id"], "Ingredient")
         else:
             ingredient_id = resolve_or_create(c, data.get("name"), user_id, kind="snack")
         ingredient = db.row("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,))
@@ -1080,11 +1163,10 @@ def inventory():
 def manual_add(data, user_id=None):
     unit = check_shop_unit(data.get("unit") or "g")
     qty = positive(data.get("qty"), "Quantity")
-    price = data.get("price")
-    price = float(price) if price not in (None, "") else None
+    price = amount_or_none(data.get("price"), "Price")
     with db.tx() as c:
         if data.get("ingredient_id"):
-            ingredient_id = int(data["ingredient_id"])
+            ingredient_id = ident(data["ingredient_id"], "Ingredient")
         else:
             ingredient_id = resolve_or_create(c, data.get("name"), user_id, kind=data.get("kind"))
         add_stock(c, ingredient_id, qty, unit, price, data.get("store"), user_id, "manual")
@@ -1145,10 +1227,14 @@ def set_actual(c, ingredient_id, qty, user_id):
 def stock_count(entries, user_id=None, full=False):
     with db.tx() as c:
         for entry in entries:
-            ingredient_id = int(entry["ingredient_id"])
-            qty = float(entry["qty"])
-            if qty < 0:
-                raise ServiceError("Quantity cannot be negative")
+            if not isinstance(entry, dict):
+                raise ServiceError("Each count needs an ingredient and a quantity")
+            ingredient_id = ident(entry.get("ingredient_id"), "Ingredient")
+            if not db.scalar("SELECT 1 FROM ingredients WHERE id = ?", (ingredient_id,)):
+                raise ServiceError("Ingredient not found", 404)
+            qty = amount_or_none(entry.get("qty"), "Quantity")
+            if qty is None:
+                raise ServiceError("Quantity is required")
             set_actual(c, ingredient_id, qty, user_id)
         if full:
             db.set_setting("last_stock_count", today().isoformat(), c)
@@ -1366,7 +1452,9 @@ def add_list_item(data, user_id=None):
     with db.tx() as c:
         list_id = ensure_open_list(c, user_id)
         if data.get("ingredient_id"):
-            ingredient_id = int(data["ingredient_id"])
+            ingredient_id = ident(data["ingredient_id"], "Ingredient")
+            if not db.scalar("SELECT 1 FROM ingredients WHERE id = ?", (ingredient_id,)):
+                raise ServiceError("Ingredient not found", 404)
         else:
             ingredient_id = resolve_or_create(c, data.get("name"), user_id, kind=data.get("kind"))
         needed = data.get("qty")
@@ -1454,12 +1542,8 @@ def update_list_item(item_id, data, user_id=None):
         if "bought_unit" in data:
             c.execute("UPDATE shopping_items SET bought_unit = ? WHERE id = ?", (check_shop_unit(data["bought_unit"]), item_id))
         if "price" in data:
-            value = data["price"]
-            if value not in (None, "") and float(value) < 0:
-                raise ServiceError("Price cannot be negative")
-            c.execute(
-                "UPDATE shopping_items SET price = ? WHERE id = ?", (None if value in (None, "") else round(float(value), 2), item_id)
-            )
+            value = amount_or_none(data["price"], "Price")
+            c.execute("UPDATE shopping_items SET price = ? WHERE id = ?", (None if value is None else round(value, 2), item_id))
         if "note" in data:
             c.execute("UPDATE shopping_items SET note = ? WHERE id = ?", (data["note"], item_id))
         if "checked" in data:

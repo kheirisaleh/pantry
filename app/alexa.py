@@ -368,7 +368,7 @@ def _add_item(item, amount, unit_word, lang, ingredient_id=None):
     unit = _parse_unit(unit_word)
     data = {"ingredient_id": ingredient_id} if ingredient_id else {"name": item}
     ingredient = db.row("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,)) if ingredient_id else None
-    base = (ingredient or {}).get("unit") or "g"
+    base = (ingredient or {}).get("unit")
     spoken = None
     if amount is not None:
         if unit is None and base == "pcs":
