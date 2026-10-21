@@ -1,0 +1,15 @@
+services:
+  pantry:
+    build: .
+    image: pantry:latest
+    container_name: pantry
+    restart: unless-stopped
+    ports:
+      - "8097:8000"
+    env_file:
+      - .env
+    environment:
+      TZ: Europe/Berlin
+    volumes:
+      - ./data:/data
+      - ./backups:/backups

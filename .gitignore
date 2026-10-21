@@ -1,0 +1,13 @@
+.env
+data/
+backups/
+*backup*/
+app-old-versions/
+*.db
+*.bak
+*.before-*
+__pycache__/
+*.pyc
+node_modules/
+docker-compose.override.yml
+.DS_Store
