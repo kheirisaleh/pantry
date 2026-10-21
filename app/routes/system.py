@@ -84,7 +84,7 @@ async def push_unsubscribe(request: Request):
 
 @router.post("/api/push/test")
 def push_test():
-    return {"sent": push.broadcast("Pantry", "Notifications are working.", "/m/")}
+    return {"sent": push.broadcast("Pantry", "Notifications are working.", "/m")}
 
 
 @router.post("/alexa")

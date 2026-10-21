@@ -147,9 +147,9 @@ def push_new_alerts():
     with db.tx() as c:
         c.execute("UPDATE alerts SET pushed = 1 WHERE pushed = 0")
     if len(fresh) == 1:
-        push.broadcast(fresh[0]["title"], fresh[0]["body"] or "", "/m/#alerts")
+        push.broadcast(fresh[0]["title"], fresh[0]["body"] or "", "/m/alerts")
     else:
-        push.broadcast(str(len(fresh)) + " new pantry notes", "; ".join(alert["title"] for alert in fresh[:3]), "/m/#alerts")
+        push.broadcast(str(len(fresh)) + " new pantry notes", "; ".join(alert["title"] for alert in fresh[:3]), "/m/alerts")
 
 
 def backup():

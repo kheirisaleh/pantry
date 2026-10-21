@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -12,7 +13,8 @@ from . import ai, db, integrations, scheduler, services
 from .routes import ROUTERS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-STATIC = os.path.join(os.path.dirname(__file__), "static")
+WEB_DIR = Path(os.environ.get("WEB_DIR", str(Path(__file__).parent / "web")))
+RESERVED_PREFIXES = ("api/", "media/", "alexa/")
 _stop = threading.Event()
 
 
@@ -69,24 +71,42 @@ for router in ROUTERS:
     app.include_router(router)
 
 
-@app.get("/sw.js")
-def service_worker():
-    return FileResponse(
-        os.path.join(STATIC, "sw.js"),
-        media_type="application/javascript",
-        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
-    )
+@app.middleware("http")
+async def cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
 
 
-@app.get("/m")
-@app.get("/m/")
-def mobile():
-    return FileResponse(os.path.join(STATIC, "m", "index.html"), headers={"Cache-Control": "no-cache"})
+if (WEB_DIR / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=WEB_DIR / "assets"), name="assets")
 
 
-@app.get("/")
-def desktop():
-    return FileResponse(os.path.join(STATIC, "index.html"), headers={"Cache-Control": "no-cache"})
+def web_file(path):
+    if not path:
+        return None
+    root = WEB_DIR.resolve()
+    candidate = (root / path).resolve()
+    if candidate.is_file() and root in candidate.parents:
+        return candidate
+    return None
 
 
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+@app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+def single_page_app(path: str):
+    if path.startswith(RESERVED_PREFIXES) or path in ("api", "alexa", "healthz"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    file = web_file(path)
+    if file:
+        if path.startswith("assets/"):
+            return FileResponse(file)
+        no_cache = file.name in ("sw.js", "index.html", "manifest.webmanifest")
+        return FileResponse(file, headers={"Cache-Control": "no-cache"} if no_cache else {"Cache-Control": "public, max-age=86400"})
+    if path.startswith("assets/"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    index = WEB_DIR / "index.html"
+    if not index.is_file():
+        return JSONResponse({"error": "The web app is not built yet. Run npm run build in the frontend folder."}, status_code=503)
+    return FileResponse(index, headers={"Cache-Control": "no-cache"})

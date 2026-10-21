@@ -22,12 +22,12 @@ def test_tick_runs_every_due_task_once(client, monkeypatch, tmp_path):
     at(monkeypatch, 23)
     monkeypatch.setattr(scheduler, "BACKUP_DIR", str(tmp_path / "backups"))
     sent = []
-    monkeypatch.setattr(push, "broadcast", lambda title, body, url="/m/": sent.append((title, body, url)) or 0)
+    monkeypatch.setattr(push, "broadcast", lambda title, body, url="/m": sent.append((title, body, url)) or 0)
     scheduler.tick()
     for name, _hour, _task in scheduler.TASKS:
         assert db.get_setting("ran_" + name) == services.today().isoformat()
     assert os.listdir(tmp_path / "backups") == ["pantry-" + services.today().strftime("%Y%m%d") + ".db"]
-    assert sent == [("Nothing planned for the next days", "Pick a few meals so the shopping list can be built.", "/m/#alerts")]
+    assert sent == [("Nothing planned for the next days", "Pick a few meals so the shopping list can be built.", "/m/alerts")]
     scheduler.tick()
     assert len(sent) == 1
 
@@ -92,12 +92,12 @@ def test_planning_reminder_is_quiet_when_meals_are_planned(client, kitchen):
 
 def test_push_summary_for_several_alerts(client, monkeypatch):
     sent = []
-    monkeypatch.setattr(push, "broadcast", lambda title, body, url="/m/": sent.append((title, body, url)) or 0)
+    monkeypatch.setattr(push, "broadcast", lambda title, body, url="/m": sent.append((title, body, url)) or 0)
     with db.tx() as c:
         for key in ("a", "b"):
             c.execute("INSERT INTO alerts(kind, dedupe_key, title) VALUES ('plan', ?, ?)", (key, "Note " + key))
     scheduler.push_new_alerts()
-    assert sent == [("2 new pantry notes", "Note a; Note b", "/m/#alerts")]
+    assert sent == [("2 new pantry notes", "Note a; Note b", "/m/alerts")]
     scheduler.push_new_alerts()
     assert len(sent) == 1
 
