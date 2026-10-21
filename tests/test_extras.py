@@ -14,8 +14,8 @@ def test_push_encryption_roundtrip(client):
     auth = os.urandom(16)
     body = push.encrypt(b'{"title":"x"}', push.b64url(receiver_public), push.b64url(auth))
     salt, key_length = body[:16], body[20]
-    sender_public = body[21:21 + key_length]
-    ciphertext = body[21 + key_length:]
+    sender_public = body[21 : 21 + key_length]
+    ciphertext = body[21 + key_length :]
     shared = receiver.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), sender_public))
     ikm = HKDF(hashes.SHA256(), 32, auth, b"WebPush: info\x00" + receiver_public + sender_public).derive(shared)
     cek = HKDF(hashes.SHA256(), 16, salt, b"Content-Encoding: aes128gcm\x00").derive(ikm)
@@ -35,7 +35,13 @@ def test_alexa_rejects_unsigned(client, monkeypatch):
 
 def test_alexa_intents(client):
     def intent(name, locale="en-US", **slots):
-        return {"request": {"type": "IntentRequest", "locale": locale, "intent": {"name": name, "slots": {key: {"name": key, "value": value} for key, value in slots.items()}}}}
+        return {
+            "request": {
+                "type": "IntentRequest",
+                "locale": locale,
+                "intent": {"name": name, "slots": {key: {"name": key, "value": value} for key, value in slots.items()}},
+            }
+        }
 
     said = alexa.handle(intent("AddItemIntent", item="milk"))["response"]["outputSpeech"]["text"]
     assert "milk" in said

@@ -1,5 +1,5 @@
-import math
 import json
+import math
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -158,7 +158,11 @@ def list_ingredients(include_archived=False):
     pending = {}
     for entry in pending_stock():
         pending.setdefault(entry["ingredient_id"], []).append({"unit": entry["pending_unit"], "qty": entry["qty"]})
-    sql = "SELECT * FROM ingredients" + ("" if include_archived else " WHERE archived = 0") + " ORDER BY category, COALESCE(name_en, raw_name)"
+    sql = (
+        "SELECT * FROM ingredients"
+        + ("" if include_archived else " WHERE archived = 0")
+        + " ORDER BY category, COALESCE(name_en, raw_name)"
+    )
     result = []
     for ingredient in db.rows(sql):
         view = ingredient_view(ingredient, stock)
@@ -174,16 +178,29 @@ def get_ingredient(ingredient_id):
         raise ServiceError("Ingredient not found", 404)
     view = ingredient_view(ingredient, stock_map())
     view["aliases"] = [entry["alias"] for entry in db.rows("SELECT alias FROM aliases WHERE ingredient_id = ?", (ingredient_id,))]
-    view["batches"] = db.rows(
-        "SELECT * FROM batches WHERE ingredient_id = ? AND qty_remaining > 0 ORDER BY purchased_at", (ingredient_id,)
-    )
+    view["batches"] = db.rows("SELECT * FROM batches WHERE ingredient_id = ? AND qty_remaining > 0 ORDER BY purchased_at", (ingredient_id,))
     view["prices"] = price_history(ingredient_id)
     return view
 
 
 EDITABLE_INGREDIENT_FIELDS = (
-    "name_en", "name_fa", "name_de", "category", "kind", "unit", "sold_by_piece", "piece_amount", "package_amount",
-    "kcal", "protein", "fat", "carbs", "fiber", "tolerance_pct", "shelf_days", "icon",
+    "name_en",
+    "name_fa",
+    "name_de",
+    "category",
+    "kind",
+    "unit",
+    "sold_by_piece",
+    "piece_amount",
+    "package_amount",
+    "kcal",
+    "protein",
+    "fat",
+    "carbs",
+    "fiber",
+    "tolerance_pct",
+    "shelf_days",
+    "icon",
 )
 
 
@@ -202,7 +219,9 @@ def update_ingredient(ingredient_id, data):
         if updates:
             assignments = ", ".join(key + " = ?" for key in updates)
             c.execute(
-                "UPDATE ingredients SET " + assignments + ", status = CASE WHEN status = 'pending' THEN 'ready' ELSE status END, updated_at = datetime('now') WHERE id = ?",
+                "UPDATE ingredients SET "
+                + assignments
+                + ", status = CASE WHEN status = 'pending' THEN 'ready' ELSE status END, updated_at = datetime('now') WHERE id = ?",
                 list(updates.values()) + [ingredient_id],
             )
             if "unit" in updates:
@@ -281,7 +300,21 @@ def recipe_view(recipe, ingredients=None, stock=None, last_cooked=None):
         ingredient = ingredients.get(item["ingredient_id"]) or {}
         item_view = dict(item)
         item_view["ingredient"] = {
-            key: ingredient.get(key) for key in ("id", "raw_name", "name_en", "name_fa", "name_de", "icon", "category", "kind", "unit", "status", "piece_amount", "package_amount")
+            key: ingredient.get(key)
+            for key in (
+                "id",
+                "raw_name",
+                "name_en",
+                "name_fa",
+                "name_de",
+                "icon",
+                "category",
+                "kind",
+                "unit",
+                "status",
+                "piece_amount",
+                "package_amount",
+            )
         }
         item_view["ingredient"]["display"] = display_name(ingredient) if ingredient else "?"
         slots.setdefault(item["slot"], []).append(item_view)
@@ -348,7 +381,17 @@ def _write_items(c, recipe_id, slots, user_id):
             lock_unit(c, ingredient_id, unit)
             c.execute(
                 "INSERT INTO recipe_items(recipe_id, slot, ingredient_id, amount, unit, optional, is_default, position, per_dish) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (recipe_id, slot_index, ingredient_id, amount, unit, optional, 1 if position == default_index else 0, position, 1 if entry.get("per_dish") else 0),
+                (
+                    recipe_id,
+                    slot_index,
+                    ingredient_id,
+                    amount,
+                    unit,
+                    optional,
+                    1 if position == default_index else 0,
+                    position,
+                    1 if entry.get("per_dish") else 0,
+                ),
             )
 
 
@@ -389,6 +432,7 @@ def update_recipe(recipe_id, data, user_id=None):
             new_items = {}
             for item in c.execute("SELECT id, ingredient_id, slot FROM recipe_items WHERE recipe_id = ?", (recipe_id,)).fetchall():
                 new_items.setdefault(item["ingredient_id"], []).append((item["id"], item["slot"]))
+
             def remap(item_id):
                 try:
                     found = old_items.get(int(item_id))
@@ -398,6 +442,7 @@ def update_recipe(recipe_id, data, user_id=None):
                     return None
                 same_slot = [entry for entry in new_items[found[0]] if entry[1] == found[1]]
                 return (same_slot or new_items[found[0]])[0]
+
             for meal in planned:
                 choices = {}
                 for value in json.loads(meal["choices"] or "{}").values():
@@ -405,7 +450,9 @@ def update_recipe(recipe_id, data, user_id=None):
                     if mapped:
                         choices[str(mapped[1])] = mapped[0]
                 optional = [mapped[0] for mapped in (remap(value) for value in json.loads(meal["optional_items"] or "[]")) if mapped]
-                c.execute("UPDATE meals SET choices = ?, optional_items = ? WHERE id = ?", (json.dumps(choices), json.dumps(optional), meal["id"]))
+                c.execute(
+                    "UPDATE meals SET choices = ?, optional_items = ? WHERE id = ?", (json.dumps(choices), json.dumps(optional), meal["id"])
+                )
         refresh_open_list(c)
     return get_recipe(recipe_id)
 
@@ -448,10 +495,17 @@ def meal_view(meal, recipes=None):
     view["choices"] = json.loads(meal.get("choices") or "{}")
     view["optional_items"] = json.loads(meal.get("optional_items") or "[]")
     recipe = (recipes or {}).get(meal["recipe_id"]) or db.row("SELECT * FROM recipes WHERE id = ?", (meal["recipe_id"],))
-    view["recipe"] = {
-        "id": recipe["id"], "display": recipe.get("name_en") or recipe["raw_name"], "name_fa": recipe.get("name_fa"),
-        "image_path": recipe.get("image_path"), "archived": recipe.get("archived"),
-    } if recipe else None
+    view["recipe"] = (
+        {
+            "id": recipe["id"],
+            "display": recipe.get("name_en") or recipe["raw_name"],
+            "name_fa": recipe.get("name_fa"),
+            "image_path": recipe.get("image_path"),
+            "archived": recipe.get("archived"),
+        }
+        if recipe
+        else None
+    )
     return view
 
 
@@ -532,7 +586,13 @@ def calendar(start, end):
         if state:
             view["feasible"] = state["feasible"]
             view["shortages"] = [
-                {"ingredient_id": key, "display": display_name(ingredients[key]), "icon": ingredients[key].get("icon"), "missing": qty, "unit": ingredients[key]["unit"]}
+                {
+                    "ingredient_id": key,
+                    "display": display_name(ingredients[key]),
+                    "icon": ingredients[key].get("icon"),
+                    "missing": qty,
+                    "unit": ingredients[key]["unit"],
+                }
                 for key, qty in state["shortages"].items()
             ]
         if meal["status"] == "planned" and meal["date"] < today().isoformat():
@@ -557,8 +617,16 @@ def add_meal(data, user_id=None):
         position = db.scalar("SELECT COALESCE(MAX(position), -1) + 1 FROM meals WHERE date = ?", (meal_date.isoformat(),))
         cursor = c.execute(
             "INSERT INTO meals(date, position, recipe_id, servings, choices, optional_items, created_by, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (meal_date.isoformat(), position, recipe_id, servings, json.dumps(data.get("choices") or {}), json.dumps(data.get("optional_items") or []), user_id,
-             data.get("source") if data.get("source") in SOURCES else "app"),
+            (
+                meal_date.isoformat(),
+                position,
+                recipe_id,
+                servings,
+                json.dumps(data.get("choices") or {}),
+                json.dumps(data.get("optional_items") or []),
+                user_id,
+                data.get("source") if data.get("source") in SOURCES else "app",
+            ),
         )
         meal_id = cursor.lastrowid
         refresh_open_list(c)
@@ -592,7 +660,9 @@ def update_meal(meal_id, data):
         updates["position"] = int(data["position"])
     with db.tx() as c:
         if updates:
-            c.execute("UPDATE meals SET " + ", ".join(key + " = ?" for key in updates) + " WHERE id = ?", list(updates.values()) + [meal_id])
+            c.execute(
+                "UPDATE meals SET " + ", ".join(key + " = ?" for key in updates) + " WHERE id = ?", list(updates.values()) + [meal_id]
+            )
         refresh_open_list(c)
     return meal_view(db.row("SELECT * FROM meals WHERE id = ?", (meal_id,)))
 
@@ -618,16 +688,19 @@ def move_meal(meal_id, data):
     index = max(0, int(data.get("index") or 0))
     with db.tx() as c:
         source_date = meal["date"]
-        others = [row["id"] for row in c.execute(
-            "SELECT id FROM meals WHERE date = ? AND id != ? ORDER BY position, id", (target_date, meal_id)).fetchall()]
+        others = [
+            row["id"]
+            for row in c.execute("SELECT id FROM meals WHERE date = ? AND id != ? ORDER BY position, id", (target_date, meal_id)).fetchall()
+        ]
         index = min(index, len(others))
         others.insert(index, meal_id)
         c.execute("UPDATE meals SET date = ? WHERE id = ?", (target_date, meal_id))
         for position, entry_id in enumerate(others):
             c.execute("UPDATE meals SET position = ? WHERE id = ?", (position, entry_id))
         if source_date != target_date:
-            remaining = [row["id"] for row in c.execute(
-                "SELECT id FROM meals WHERE date = ? ORDER BY position, id", (source_date,)).fetchall()]
+            remaining = [
+                row["id"] for row in c.execute("SELECT id FROM meals WHERE date = ? ORDER BY position, id", (source_date,)).fetchall()
+            ]
             for position, entry_id in enumerate(remaining):
                 c.execute("UPDATE meals SET position = ? WHERE id = ?", (position, entry_id))
         refresh_open_list(c)
@@ -651,10 +724,21 @@ def shortages_for(day, lang="en"):
             ingredient = ingredients[ingredient_id]
             name = (ingredient.get("name_de") if lang == "de" else None) or display_name(ingredient)
             rounded = logic.round_purchase(ingredient, qty) or {}
-            missing.append({"ingredient_id": ingredient_id, "name": name, "missing_qty": round(qty, 1), "unit": ingredient["unit"],
-                            "buy_qty": rounded.get("qty"), "packages": rounded.get("packages"), "pieces": rounded.get("pieces"),
-                            "text": format_qty(qty, ingredient["unit"])})
-        result.append({"meal_id": meal["id"], "dish": dish, "servings": meal["servings"], "feasible": entry["feasible"], "missing": missing})
+            missing.append(
+                {
+                    "ingredient_id": ingredient_id,
+                    "name": name,
+                    "missing_qty": round(qty, 1),
+                    "unit": ingredient["unit"],
+                    "buy_qty": rounded.get("qty"),
+                    "packages": rounded.get("packages"),
+                    "pieces": rounded.get("pieces"),
+                    "text": format_qty(qty, ingredient["unit"]),
+                }
+            )
+        result.append(
+            {"meal_id": meal["id"], "dish": dish, "servings": meal["servings"], "feasible": entry["feasible"], "missing": missing}
+        )
     return result
 
 
@@ -676,35 +760,45 @@ def suggestions(day, meal_id=None, servings=None):
     for recipe in db.rows("SELECT * FROM recipes WHERE archived = 0"):
         record = {"recipe_id": recipe["id"], "servings": servings, "choices": {}, "optional_items": []}
         required, unconvertible = logic.meal_requirements(record, recipe_items(recipe["id"]), ingredients)
-        candidates.append({
-            "recipe_id": recipe["id"],
-            "name": recipe.get("name_en") or recipe["raw_name"],
-            "name_fa": recipe.get("name_fa"),
-            "image_path": recipe.get("image_path"),
-            "required": required,
-            "unconvertible": unconvertible,
-            "last_cooked": last.get(recipe["id"]),
-            "planned_here": bool(target and target["recipe_id"] == recipe["id"]) or recipe["id"] in pool,
-            "skip_key": pool.get(recipe["id"]),
-        })
+        candidates.append(
+            {
+                "recipe_id": recipe["id"],
+                "name": recipe.get("name_en") or recipe["raw_name"],
+                "name_fa": recipe.get("name_fa"),
+                "image_path": recipe.get("image_path"),
+                "required": required,
+                "unconvertible": unconvertible,
+                "last_cooked": last.get(recipe["id"]),
+                "planned_here": bool(target and target["recipe_id"] == recipe["id"]) or recipe["id"] in pool,
+                "skip_key": pool.get(recipe["id"]),
+            }
+        )
     ranked = logic.rank_suggestions(stock_at_day, after, candidates)
     result = []
     for entry in ranked:
-        result.append({
-            "recipe_id": entry["recipe_id"],
-            "name": entry["name"],
-            "name_fa": entry["name_fa"],
-            "image_path": entry["image_path"],
-            "tier": entry["tier"],
-            "breaks": entry["breaks"],
-            "last_cooked": entry["last_cooked"],
-            "planned_here": entry["planned_here"],
-            "pool_meal_id": entry.get("skip_key"),
-            "shortages": [
-                {"ingredient_id": key, "display": display_name(ingredients[key]), "icon": ingredients[key].get("icon"), "missing": qty, "unit": ingredients[key]["unit"]}
-                for key, qty in entry["shortages"].items()
-            ],
-        })
+        result.append(
+            {
+                "recipe_id": entry["recipe_id"],
+                "name": entry["name"],
+                "name_fa": entry["name_fa"],
+                "image_path": entry["image_path"],
+                "tier": entry["tier"],
+                "breaks": entry["breaks"],
+                "last_cooked": entry["last_cooked"],
+                "planned_here": entry["planned_here"],
+                "pool_meal_id": entry.get("skip_key"),
+                "shortages": [
+                    {
+                        "ingredient_id": key,
+                        "display": display_name(ingredients[key]),
+                        "icon": ingredients[key].get("icon"),
+                        "missing": qty,
+                        "unit": ingredients[key]["unit"],
+                    }
+                    for key, qty in entry["shortages"].items()
+                ],
+            }
+        )
     return {"servings": servings, "suggestions": result}
 
 
@@ -713,9 +807,7 @@ def default_servings():
 
 
 def _consume(c, ingredient_id, qty, kind, user_id, meal_id=None):
-    batches = db.rows(
-        "SELECT * FROM batches WHERE ingredient_id = ? AND qty_remaining > 0 AND pending_unit IS NULL", (ingredient_id,)
-    )
+    batches = db.rows("SELECT * FROM batches WHERE ingredient_id = ? AND qty_remaining > 0 AND pending_unit IS NULL", (ingredient_id,))
     taken, missing = logic.fifo_consume(batches, qty)
     value = 0.0
     for portion in taken:
@@ -762,7 +854,10 @@ def cook(data, user_id=None):
             if data.get("date"):
                 updates["date"] = parse_date(data["date"]).isoformat()
             if updates:
-                c.execute("UPDATE meals SET " + ", ".join(key + " = ?" for key in updates) + " WHERE id = ?", list(updates.values()) + [meal["id"]])
+                c.execute(
+                    "UPDATE meals SET " + ", ".join(key + " = ?" for key in updates) + " WHERE id = ?",
+                    list(updates.values()) + [meal["id"]],
+                )
             meal = db.row("SELECT * FROM meals WHERE id = ?", (meal["id"],))
         else:
             recipe_id = int(data.get("recipe_id") or 0)
@@ -772,8 +867,15 @@ def cook(data, user_id=None):
             position = db.scalar("SELECT COALESCE(MAX(position), -1) + 1 FROM meals WHERE date = ?", (meal_date,))
             cursor = c.execute(
                 "INSERT INTO meals(date, position, recipe_id, servings, choices, optional_items, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (meal_date, position, recipe_id, positive(data.get("servings") or default_servings(), "Servings"),
-                 json.dumps(data.get("choices") or {}), json.dumps(data.get("optional_items") or []), user_id),
+                (
+                    meal_date,
+                    position,
+                    recipe_id,
+                    positive(data.get("servings") or default_servings(), "Servings"),
+                    json.dumps(data.get("choices") or {}),
+                    json.dumps(data.get("optional_items") or []),
+                    user_id,
+                ),
             )
             meal = db.row("SELECT * FROM meals WHERE id = ?", (cursor.lastrowid,))
         record = meal_record(meal)
@@ -788,14 +890,21 @@ def cook(data, user_id=None):
             else:
                 required[ingredient_id] = qty
         totals = {"kcal": 0.0, "protein": 0.0, "fat": 0.0, "carbs": 0.0, "fiber": 0.0}
-        known = {key: True for key in totals}
+        known = dict.fromkeys(totals, True)
         cost = 0.0
         shortfalls = []
         for ingredient_id, qty in required.items():
             value, missing = _consume(c, ingredient_id, qty, "cook", user_id, meal["id"])
             cost += value
             if missing > logic.EPSILON:
-                shortfalls.append({"ingredient_id": ingredient_id, "display": display_name(ingredients[ingredient_id]), "missing": missing, "unit": ingredients[ingredient_id]["unit"]})
+                shortfalls.append(
+                    {
+                        "ingredient_id": ingredient_id,
+                        "display": display_name(ingredients[ingredient_id]),
+                        "missing": missing,
+                        "unit": ingredients[ingredient_id]["unit"],
+                    }
+                )
             values = logic.nutrients(ingredients[ingredient_id], qty)
             for key in totals:
                 if values[key] is None:
@@ -804,9 +913,13 @@ def cook(data, user_id=None):
                     totals[key] += values[key]
         c.execute(
             "UPDATE meals SET status = 'cooked', cooked_by = ?, cooked_at = ?, cost = ?, kcal = ?, protein = ?, fat = ?, carbs = ?, fiber = ? WHERE id = ?",
-            (user_id, iso_now(), round(cost, 2),
-             *[round(totals[key], 1) if known[key] else None for key in ("kcal", "protein", "fat", "carbs", "fiber")],
-             meal["id"]),
+            (
+                user_id,
+                iso_now(),
+                round(cost, 2),
+                *[round(totals[key], 1) if known[key] else None for key in ("kcal", "protein", "fat", "carbs", "fiber")],
+                meal["id"],
+            ),
         )
         refresh_open_list(c)
     view = meal_view(db.row("SELECT * FROM meals WHERE id = ?", (meal["id"],)))
@@ -840,8 +953,15 @@ def cook_preview(meal_id=None, recipe_id=None, servings=None, choices=None, opti
         "choices": record["choices"],
         "optional_items": record["optional_items"],
         "lines": [
-            {"ingredient_id": key, "display": display_name(ingredients[key]), "name_fa": ingredients[key].get("name_fa"),
-             "icon": ingredients[key].get("icon"), "qty": qty, "unit": ingredients[key]["unit"], "stock": stock.get(key, 0.0)}
+            {
+                "ingredient_id": key,
+                "display": display_name(ingredients[key]),
+                "name_fa": ingredients[key].get("name_fa"),
+                "icon": ingredients[key].get("icon"),
+                "qty": qty,
+                "unit": ingredients[key]["unit"],
+                "stock": stock.get(key, 0.0),
+            }
             for key, qty in required.items()
         ],
         "unconvertible": [display_name(ingredients[key]) for key in unconvertible],
@@ -888,8 +1008,18 @@ def log_snack(data, user_id=None):
             values = logic.nutrients(ingredient, qty)
         c.execute(
             "INSERT INTO snacks(ingredient_id, qty, date, user_id, kcal, protein, fat, carbs, fiber, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (ingredient_id, qty if qty is not None else qty_input, snack_date, user_id,
-             values["kcal"], values["protein"], values["fat"], values["carbs"], values["fiber"], round(cost, 2)),
+            (
+                ingredient_id,
+                qty if qty is not None else qty_input,
+                snack_date,
+                user_id,
+                values["kcal"],
+                values["protein"],
+                values["fat"],
+                values["carbs"],
+                values["fiber"],
+                round(cost, 2),
+            ),
         )
     return {"ok": True}
 
@@ -937,7 +1067,9 @@ def inventory():
             (item["id"],),
         )
         item["batches"] = batches
-        expiring = [batch["expires_at"] for batch in batches if batch["expires_at"] and batch["expires_at"] <= soon and not batch["pending_unit"]]
+        expiring = [
+            batch["expires_at"] for batch in batches if batch["expires_at"] and batch["expires_at"] <= soon and not batch["pending_unit"]
+        ]
         item["expiring_estimate"] = min(expiring) if expiring else None
     return {
         "items": items,
@@ -998,7 +1130,16 @@ def set_actual(c, ingredient_id, qty, user_id):
     if difference < -logic.EPSILON:
         _consume(c, ingredient_id, -difference, "adjust_down", user_id)
     elif difference > logic.EPSILON:
-        add_stock(c, ingredient_id, difference, db.scalar("SELECT unit FROM ingredients WHERE id = ?", (ingredient_id,)), None, None, user_id, "adjust_up")
+        add_stock(
+            c,
+            ingredient_id,
+            difference,
+            db.scalar("SELECT unit FROM ingredients WHERE id = ?", (ingredient_id,)),
+            None,
+            None,
+            user_id,
+            "adjust_up",
+        )
 
 
 def stock_count(entries, user_id=None, full=False):
@@ -1026,13 +1167,21 @@ def review(start, end):
     sequence, ingredients = planned_sequence(max(start, today()).isoformat(), end.isoformat())
     stock = stock_map()
     needed = {}
-    for meal, required in sequence:
+    for _meal, required in sequence:
         for ingredient_id in required:
             needed[ingredient_id] = needed.get(ingredient_id, 0.0) + required[ingredient_id]
     return [
-        {"ingredient_id": key, "display": display_name(ingredients[key]), "name_fa": ingredients[key].get("name_fa"),
-         "icon": ingredients[key].get("icon"), "category": ingredients[key]["category"], "unit": ingredients[key]["unit"],
-         "piece_amount": ingredients[key].get("piece_amount"), "stock": stock.get(key, 0.0), "needed": qty}
+        {
+            "ingredient_id": key,
+            "display": display_name(ingredients[key]),
+            "name_fa": ingredients[key].get("name_fa"),
+            "icon": ingredients[key].get("icon"),
+            "category": ingredients[key]["category"],
+            "unit": ingredients[key]["unit"],
+            "piece_amount": ingredients[key].get("piece_amount"),
+            "stock": stock.get(key, 0.0),
+            "needed": qty,
+        }
         for key, qty in sorted(needed.items(), key=lambda pair: (ingredients[pair[0]]["category"], display_name(ingredients[pair[0]])))
     ]
 
@@ -1045,7 +1194,9 @@ def build_list(start, end, user_id=None):
     with db.tx() as c:
         current = open_list()
         if current:
-            c.execute("UPDATE shopping_lists SET range_start = ?, range_end = ? WHERE id = ?", (start.isoformat(), end.isoformat(), current["id"]))
+            c.execute(
+                "UPDATE shopping_lists SET range_start = ?, range_end = ? WHERE id = ?", (start.isoformat(), end.isoformat(), current["id"])
+            )
             list_id = current["id"]
         else:
             cursor = c.execute(
@@ -1092,18 +1243,27 @@ def recompute_auto(c, list_id):
             if qty:
                 stock[entry["ingredient_id"]] = stock.get(entry["ingredient_id"], 0.0) + qty
     needs = logic.shopping_needs(stock, before, within, ingredients)
-    covered = set(row["ingredient_id"] for row in db.rows(
-        "SELECT ingredient_id FROM shopping_items WHERE list_id = ? AND checked = 1", (list_id,)))
+    covered = {
+        row["ingredient_id"] for row in db.rows("SELECT ingredient_id FROM shopping_items WHERE list_id = ? AND checked = 1", (list_id,))
+    }
     for row in db.rows("SELECT DISTINCT ingredient_id FROM batches WHERE pending_unit IS NOT NULL AND qty_remaining > 0"):
         covered.add(row["ingredient_id"])
     unknown = set()
     for ingredient_id in covered:
         if ingredient_id not in needs:
             continue
-        bought = db.rows("SELECT bought_qty, bought_unit FROM shopping_items WHERE list_id = ? AND ingredient_id = ? AND checked = 1", (list_id, ingredient_id))
-        pending = db.scalar("SELECT COUNT(*) FROM batches WHERE ingredient_id = ? AND pending_unit IS NOT NULL AND qty_remaining > 0", (ingredient_id,))
+        bought = db.rows(
+            "SELECT bought_qty, bought_unit FROM shopping_items WHERE list_id = ? AND ingredient_id = ? AND checked = 1",
+            (list_id, ingredient_id),
+        )
+        pending = db.scalar(
+            "SELECT COUNT(*) FROM batches WHERE ingredient_id = ? AND pending_unit IS NOT NULL AND qty_remaining > 0", (ingredient_id,)
+        )
         ingredient = ingredients.get(ingredient_id) or {}
-        if pending or any(entry["bought_qty"] and logic.to_base(ingredient, entry["bought_qty"], entry["bought_unit"] or ingredient.get("unit")) is None for entry in bought):
+        if pending or any(
+            entry["bought_qty"] and logic.to_base(ingredient, entry["bought_qty"], entry["bought_unit"] or ingredient.get("unit")) is None
+            for entry in bought
+        ):
             unknown.add(ingredient_id)
     for ingredient_id in unknown:
         needs.pop(ingredient_id, None)
@@ -1127,7 +1287,22 @@ def recompute_auto(c, list_id):
 def item_view(item, ingredient, session_lookup=None):
     view = dict(item)
     view["ingredient"] = {
-        key: ingredient.get(key) for key in ("id", "raw_name", "name_en", "name_fa", "name_de", "icon", "category", "kind", "unit", "sold_by_piece", "piece_amount", "package_amount", "status")
+        key: ingredient.get(key)
+        for key in (
+            "id",
+            "raw_name",
+            "name_en",
+            "name_fa",
+            "name_de",
+            "icon",
+            "category",
+            "kind",
+            "unit",
+            "sold_by_piece",
+            "piece_amount",
+            "package_amount",
+            "status",
+        )
     }
     view["ingredient"]["display"] = display_name(ingredient)
     view["pieces"] = None
@@ -1139,8 +1314,24 @@ def item_view(item, ingredient, session_lookup=None):
 
 
 CATEGORY_ORDER = [
-    "vegetables", "fruits", "herbs", "meat", "poultry", "fish", "dairy", "eggs", "bakery", "grains", "legumes",
-    "canned", "frozen", "condiments", "snacks", "beverages", "household", "other",
+    "vegetables",
+    "fruits",
+    "herbs",
+    "meat",
+    "poultry",
+    "fish",
+    "dairy",
+    "eggs",
+    "bakery",
+    "grains",
+    "legumes",
+    "canned",
+    "frozen",
+    "condiments",
+    "snacks",
+    "beverages",
+    "household",
+    "other",
 ]
 
 
@@ -1151,10 +1342,14 @@ def get_list(list_id=None):
     items = db.rows("SELECT * FROM shopping_items WHERE list_id = ? ORDER BY id", (shopping["id"],))
     ingredients = ingredient_map([item["ingredient_id"] for item in items])
     views = [item_view(item, ingredients[item["ingredient_id"]]) for item in items]
-    views.sort(key=lambda view: (
-        CATEGORY_ORDER.index(view["ingredient"]["category"]) if view["ingredient"]["category"] in CATEGORY_ORDER else len(CATEGORY_ORDER),
-        (view["ingredient"]["display"] or "").lower(),
-    ))
+    views.sort(
+        key=lambda view: (
+            CATEGORY_ORDER.index(view["ingredient"]["category"])
+            if view["ingredient"]["category"] in CATEGORY_ORDER
+            else len(CATEGORY_ORDER),
+            (view["ingredient"]["display"] or "").lower(),
+        )
+    )
     sessions = db.rows("SELECT * FROM shopping_sessions WHERE list_id = ? ORDER BY id", (shopping["id"],))
     for session in sessions:
         session["total"] = round(sum(view["price"] or 0 for view in views if view["session_id"] == session["id"] and view["checked"]), 2)
@@ -1183,7 +1378,15 @@ def add_list_item(data, user_id=None):
         session_id = data.get("session_id")
         cursor = c.execute(
             "INSERT INTO shopping_items(list_id, ingredient_id, auto, needed_qty, note, added_by, session_id, source) VALUES (?, ?, 0, ?, ?, ?, ?, ?)",
-            (list_id, ingredient_id, needed_qty, data.get("note"), user_id, session_id, data.get("source") if data.get("source") in SOURCES else "app"),
+            (
+                list_id,
+                ingredient_id,
+                needed_qty,
+                data.get("note"),
+                user_id,
+                session_id,
+                data.get("source") if data.get("source") in SOURCES else "app",
+            ),
         )
         item_id = cursor.lastrowid
         if data.get("checked"):
@@ -1219,12 +1422,15 @@ def _check_item(c, item_id, data, user_id):
     item = db.row("SELECT * FROM shopping_items WHERE id = ?", (item_id,))
     session_id = data.get("session_id") or item["session_id"]
     if not session_id:
-        active = db.row("SELECT id FROM shopping_sessions WHERE list_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1", (item["list_id"],))
+        active = db.row(
+            "SELECT id FROM shopping_sessions WHERE list_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1", (item["list_id"],)
+        )
         if active:
             session_id = active["id"]
         else:
             session_id = c.execute(
-                "INSERT INTO shopping_sessions(list_id, store, user_id, started_at) VALUES (?, ?, ?, ?)", (item["list_id"], "Store", user_id, iso_now())
+                "INSERT INTO shopping_sessions(list_id, store, user_id, started_at) VALUES (?, ?, ?, ?)",
+                (item["list_id"], "Store", user_id, iso_now()),
             ).lastrowid
     c.execute("UPDATE shopping_items SET checked = 1, session_id = ? WHERE id = ?", (session_id, item_id))
     if item["bought_qty"] is None and "bought_qty" not in data and item["needed_qty"]:
@@ -1241,14 +1447,19 @@ def update_list_item(item_id, data, user_id=None):
     with db.tx() as c:
         if "bought_qty" in data:
             value = data["bought_qty"]
-            c.execute("UPDATE shopping_items SET bought_qty = ? WHERE id = ?", (None if value in (None, "") else positive(value, "Quantity"), item_id))
+            c.execute(
+                "UPDATE shopping_items SET bought_qty = ? WHERE id = ?",
+                (None if value in (None, "") else positive(value, "Quantity"), item_id),
+            )
         if "bought_unit" in data:
             c.execute("UPDATE shopping_items SET bought_unit = ? WHERE id = ?", (check_shop_unit(data["bought_unit"]), item_id))
         if "price" in data:
             value = data["price"]
             if value not in (None, "") and float(value) < 0:
                 raise ServiceError("Price cannot be negative")
-            c.execute("UPDATE shopping_items SET price = ? WHERE id = ?", (None if value in (None, "") else round(float(value), 2), item_id))
+            c.execute(
+                "UPDATE shopping_items SET price = ? WHERE id = ?", (None if value in (None, "") else round(float(value), 2), item_id)
+            )
         if "note" in data:
             c.execute("UPDATE shopping_items SET note = ? WHERE id = ?", (data["note"], item_id))
         if "checked" in data:
@@ -1297,9 +1508,15 @@ def _commit_session(c, session, user_id):
                 unit = ingredient["unit"]
             else:
                 qty = 1
-                unit = "pcs" if ingredient["kind"] != "food" or ingredient["sold_by_piece"] or ingredient["unit"] == "pcs" else ingredient["unit"]
+                unit = (
+                    "pcs"
+                    if ingredient["kind"] != "food" or ingredient["sold_by_piece"] or ingredient["unit"] == "pcs"
+                    else ingredient["unit"]
+                )
         learn_size(c, item["ingredient_id"], qty, unit, item["needed_qty"])
-        add_stock(c, item["ingredient_id"], qty, unit, item["price"], session["store"], user_id, "purchase", session["id"], session["started_at"])
+        add_stock(
+            c, item["ingredient_id"], qty, unit, item["price"], session["store"], user_id, "purchase", session["id"], session["started_at"]
+        )
         c.execute("UPDATE shopping_items SET committed = 1, bought_qty = ?, bought_unit = ? WHERE id = ?", (qty, unit, item["id"]))
     c.execute("UPDATE shopping_sessions SET status = 'finished', finished_at = ? WHERE id = ?", (iso_now(), session["id"]))
 
@@ -1343,7 +1560,7 @@ def close_list(list_id, user_id=None):
         for session in db.rows("SELECT * FROM shopping_sessions WHERE list_id = ? AND status != 'finished'", (list_id,)):
             _commit_session(c, session, user_id)
         skipped = db.rows("SELECT * FROM shopping_items WHERE list_id = ? AND committed = 0", (list_id,))
-        skipped_ids = set(item["ingredient_id"] for item in skipped)
+        skipped_ids = {item["ingredient_id"] for item in skipped}
         c.execute("DELETE FROM shopping_items WHERE list_id = ? AND committed = 0", (list_id,))
         c.execute("UPDATE shopping_lists SET status = 'closed', closed_at = ? WHERE id = ?", (iso_now(), list_id))
         if shopping["range_start"] and shopping["range_end"]:
@@ -1378,10 +1595,10 @@ def _missing_alerts(c, only_ingredients=None):
 
 def format_qty(qty, unit):
     if unit == "pcs":
-        return ("%g" % round(qty, 1)) + " pcs"
+        return ("{:g}".format(round(qty, 1))) + " pcs"
     if qty >= 1000:
-        return ("%g" % round(qty / 1000.0, 2)) + (" kg" if unit == "g" else " l")
-    return ("%g" % round(qty)) + " " + unit
+        return ("{:g}".format(round(qty / 1000.0, 2))) + (" kg" if unit == "g" else " l")
+    return ("{:g}".format(round(qty))) + " " + unit
 
 
 def alerts(status="open"):
@@ -1405,7 +1622,8 @@ def act_on_alert(alert_id, user_id=None):
         if alert["kind"] == "missing" and payload.get("ingredient_id"):
             list_id = ensure_open_list(c, user_id)
             exists = db.scalar(
-                "SELECT id FROM shopping_items WHERE list_id = ? AND ingredient_id = ? AND committed = 0", (list_id, payload["ingredient_id"])
+                "SELECT id FROM shopping_items WHERE list_id = ? AND ingredient_id = ? AND committed = 0",
+                (list_id, payload["ingredient_id"]),
             )
             if not exists:
                 c.execute(
@@ -1424,7 +1642,12 @@ def price_history(ingredient_id):
     )
     scale = 1.0 if (ingredient or {}).get("unit") == "pcs" else 1000.0
     return [
-        {"date": entry["purchased_at"][:10], "store": entry["store"], "qty": entry["qty_initial"], "price": entry["price_total"],
-         "unit_price": round(entry["price_total"] / entry["qty_initial"] * scale, 2)}
+        {
+            "date": entry["purchased_at"][:10],
+            "store": entry["store"],
+            "qty": entry["qty_initial"],
+            "price": entry["price_total"],
+            "unit_price": round(entry["price_total"] / entry["qty_initial"] * scale, 2),
+        }
         for entry in found
     ]

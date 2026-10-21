@@ -6,7 +6,6 @@ import logging
 import os
 import queue
 import secrets
-import threading
 import time
 import urllib.request
 from datetime import timedelta
@@ -53,9 +52,19 @@ CREATE TABLE IF NOT EXISTS nutrition_exports (
 """
 
 EVENT_TYPES = [
-    "meal.planned", "meal.moved", "meal.updated", "meal.removed", "meal.cooked", "meal.uncooked",
-    "shopping.item_added", "shopping.list_built", "shopping.finished",
-    "stock.used_up", "stock.added", "recipe.created", "nutrition.daily",
+    "meal.planned",
+    "meal.moved",
+    "meal.updated",
+    "meal.removed",
+    "meal.cooked",
+    "meal.uncooked",
+    "shopping.item_added",
+    "shopping.list_built",
+    "shopping.finished",
+    "stock.used_up",
+    "stock.added",
+    "recipe.created",
+    "nutrition.daily",
 ]
 
 _deliveries = queue.Queue()
@@ -116,8 +125,10 @@ def save_webhook(data, webhook_id=None):
     name = (data.get("name") or "").strip() or url
     with db.tx() as c:
         if webhook_id:
-            c.execute("UPDATE webhooks SET name = ?, url = ?, events = ?, active = ? WHERE id = ?",
-                      (name, url, ",".join(events), 1 if data.get("active", True) else 0, webhook_id))
+            c.execute(
+                "UPDATE webhooks SET name = ?, url = ?, events = ?, active = ? WHERE id = ?",
+                (name, url, ",".join(events), 1 if data.get("active", True) else 0, webhook_id),
+            )
             secret = None
         else:
             secret = "whsec_" + secrets.token_urlsafe(24)
@@ -174,10 +185,18 @@ def _deliver(hook_id, body):
     raw = json.dumps(body, default=str).encode("utf-8")
     stamp = str(int(time.time()))
     signature = hmac.new(hook["secret"].encode("utf-8"), (stamp + ".").encode("utf-8") + raw, hashlib.sha256).hexdigest()
-    request = urllib.request.Request(hook["url"], data=raw, method="POST", headers={
-        "Content-Type": "application/json", "User-Agent": "PantryHome/1.0",
-        "X-Pantry-Event": body["type"], "X-Pantry-Timestamp": stamp, "X-Pantry-Signature": "sha256=" + signature,
-    })
+    request = urllib.request.Request(
+        hook["url"],
+        data=raw,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "PantryHome/1.0",
+            "X-Pantry-Event": body["type"],
+            "X-Pantry-Timestamp": stamp,
+            "X-Pantry-Signature": "sha256=" + signature,
+        },
+    )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             status = str(response.status)
@@ -198,7 +217,7 @@ def delivery_worker(stop_event):
             continue
         try:
             if not _deliver(hook_id, body) and attempt < 3:
-                time.sleep(2 ** attempt * 5)
+                time.sleep(2**attempt * 5)
                 _deliveries.put((hook_id, body, attempt + 1))
         except Exception:
             log.exception("Webhook delivery failed")
@@ -225,7 +244,7 @@ def nutrition_for_day(day, user_id=None):
     keys = ("kcal", "protein", "fat", "carbs", "fiber")
     result = []
     for user in users:
-        totals = {key: 0.0 for key in keys}
+        totals = dict.fromkeys(keys, 0.0)
         complete = True
         entries = []
         for meal in meals:
@@ -239,7 +258,9 @@ def nutrition_for_day(day, user_id=None):
                 else:
                     portion[key] = round(value / servings, 1)
                     totals[key] += value / servings
-            entries.append({"type": "meal", "meal_id": meal["id"], "name": meal["dish"], "name_fa": meal["name_fa"], "portion": 1, **portion})
+            entries.append(
+                {"type": "meal", "meal_id": meal["id"], "name": meal["dish"], "name_fa": meal["name_fa"], "portion": 1, **portion}
+            )
         snacks = db.rows(
             "SELECT s.*, COALESCE(i.name_en, i.raw_name) AS name, i.unit FROM snacks s JOIN ingredients i ON i.id = s.ingredient_id "
             "WHERE s.date = ? AND (s.user_id = ? OR s.user_id IS NULL)",
@@ -257,12 +278,16 @@ def nutrition_for_day(day, user_id=None):
                     item[key] = round(value * share, 1)
                     totals[key] += value * share
             entries.append(item)
-        result.append({
-            "date": day, "user": {"id": user["id"], "name": user["name"]},
-            "totals": {key: round(value, 1) for key, value in totals.items()},
-            "complete": complete, "entries": entries,
-            "note": "Meals are split evenly by the number of servings cooked.",
-        })
+        result.append(
+            {
+                "date": day,
+                "user": {"id": user["id"], "name": user["name"]},
+                "totals": {key: round(value, 1) for key, value in totals.items()},
+                "complete": complete,
+                "entries": entries,
+                "note": "Meals are split evenly by the number of servings cooked.",
+            }
+        )
     return result
 
 
@@ -298,7 +323,13 @@ def export_day(day, final=False):
     with open(os.path.join(export_dir(), day + ".json"), "w", encoding="utf-8") as handle:
         json.dump({"date": day, "final": final, "people": reports}, handle, ensure_ascii=False, indent=2)
     if final:
-        emit("nutrition.daily", {"date": day, "people": [{"user": report["user"], "totals": report["totals"], "complete": report["complete"]} for report in reports]})
+        emit(
+            "nutrition.daily",
+            {
+                "date": day,
+                "people": [{"user": report["user"], "totals": report["totals"], "complete": report["complete"]} for report in reports],
+            },
+        )
     return reports
 
 
@@ -336,8 +367,14 @@ def _wrap(name, event_type, describe):
 def _meal_summary(result, args, kwargs):
     meal = result.get("meal", result) if isinstance(result, dict) else {}
     recipe = meal.get("recipe") or result.get("recipe") or {}
-    return {"meal_id": meal.get("id"), "date": meal.get("date"), "position": meal.get("position"), "servings": meal.get("servings"),
-            "recipe_id": recipe.get("id"), "dish": recipe.get("display")}
+    return {
+        "meal_id": meal.get("id"),
+        "date": meal.get("date"),
+        "position": meal.get("position"),
+        "servings": meal.get("servings"),
+        "recipe_id": recipe.get("id"),
+        "dish": recipe.get("display"),
+    }
 
 
 def install_hooks():
@@ -345,13 +382,26 @@ def install_hooks():
     _wrap("move_meal", "meal.moved", _meal_summary)
     _wrap("update_meal", "meal.updated", _meal_summary)
     _wrap("delete_meal", "meal.removed", lambda result, args, kwargs: {"meal_id": args[0] if args else None})
-    _wrap("cook", "meal.cooked", lambda result, args, kwargs: {
-        "meal_id": result.get("id"), "date": result.get("date"), "dish": (result.get("recipe") or {}).get("display"),
-        "servings": result.get("servings"), "kcal": result.get("kcal"), "protein": result.get("protein"),
-        "shortfalls": [entry.get("display") for entry in result.get("shortfalls") or []]})
+    _wrap(
+        "cook",
+        "meal.cooked",
+        lambda result, args, kwargs: {
+            "meal_id": result.get("id"),
+            "date": result.get("date"),
+            "dish": (result.get("recipe") or {}).get("display"),
+            "servings": result.get("servings"),
+            "kcal": result.get("kcal"),
+            "protein": result.get("protein"),
+            "shortfalls": [entry.get("display") for entry in result.get("shortfalls") or []],
+        },
+    )
     _wrap("uncook", "meal.uncooked", lambda result, args, kwargs: {"meal_id": args[0] if args else None})
     _wrap("add_list_item", "shopping.item_added", lambda result, args, kwargs: _item_summary(result))
-    _wrap("build_list", "shopping.list_built", lambda result, args, kwargs: {"start": args[0] if args else None, "end": args[1] if len(args) > 1 else None})
+    _wrap(
+        "build_list",
+        "shopping.list_built",
+        lambda result, args, kwargs: {"start": args[0] if args else None, "end": args[1] if len(args) > 1 else None},
+    )
     _wrap("used_up", "stock.used_up", lambda result, args, kwargs: {"ingredient_id": args[0] if args else None})
     _wrap("create_recipe", "recipe.created", lambda result, args, kwargs: {"recipe_id": result.get("id"), "name": result.get("display")})
 
@@ -359,8 +409,13 @@ def install_hooks():
 def _item_summary(result):
     item = next((entry for entry in (result.get("list") or {}).get("items", []) if entry["id"] == result.get("item_id")), None) or {}
     ingredient = item.get("ingredient") or {}
-    return {"item_id": result.get("item_id"), "ingredient_id": ingredient.get("id"), "name": ingredient.get("display"),
-            "needed_qty": item.get("needed_qty"), "unit": ingredient.get("unit")}
+    return {
+        "item_id": result.get("item_id"),
+        "ingredient_id": ingredient.get("id"),
+        "name": ingredient.get("display"),
+        "needed_qty": item.get("needed_qty"),
+        "unit": ingredient.get("unit"),
+    }
 
 
 def week_summary(start=None):
@@ -388,17 +443,25 @@ def week_summary(start=None):
                     recipes[recipe_id] = {}
             for key in planned:
                 planned[key] += recipes[recipe_id].get(key) or 0
-        days.append({
-            "date": iso, "is_today": day == today, "is_future": day > today,
-            "eaten_kcal": round(eaten["kcal"] / count), "eaten_protein": round(eaten["protein"] / count, 1),
-            "planned_kcal": round(planned["kcal"]), "planned_protein": round(planned["protein"], 1),
-            "people": [{"name": report["user"]["name"], "kcal": round(report["totals"]["kcal"] or 0)} for report in people],
-        })
+        days.append(
+            {
+                "date": iso,
+                "is_today": day == today,
+                "is_future": day > today,
+                "eaten_kcal": round(eaten["kcal"] / count),
+                "eaten_protein": round(eaten["protein"] / count, 1),
+                "planned_kcal": round(planned["kcal"]),
+                "planned_protein": round(planned["protein"], 1),
+                "people": [{"name": report["user"]["name"], "kcal": round(report["totals"]["kcal"] or 0)} for report in people],
+            }
+        )
     past = [day for day in days if not day["is_future"] and day["eaten_kcal"]]
     planned_days = [day for day in days if day["planned_kcal"]]
     return {
         "average_planned_kcal": round(sum(day["planned_kcal"] for day in planned_days) / len(planned_days)) if planned_days else 0,
-        "start": first.isoformat(), "days": days, "users": [user["name"] for user in users],
+        "start": first.isoformat(),
+        "days": days,
+        "users": [user["name"] for user in users],
         "total_kcal": sum(day["eaten_kcal"] for day in days),
         "average_kcal": round(sum(day["eaten_kcal"] for day in past) / len(past)) if past else 0,
         "total_protein": round(sum(day["eaten_protein"] for day in days), 1),

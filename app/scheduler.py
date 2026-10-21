@@ -47,7 +47,9 @@ def tomorrow_shortages():
                 for key, qty in entry["shortages"].items()
             )
             _alert(
-                c, "tomorrow", "tomorrow:" + str(meal["id"]) + ":" + tomorrow,
+                c,
+                "tomorrow",
+                "tomorrow:" + str(meal["id"]) + ":" + tomorrow,
                 "Tomorrow: " + (recipe["name_en"] or recipe["raw_name"]) + " is missing ingredients",
                 "Missing " + missing + ".",
                 {"meal_id": meal["id"], "date": tomorrow, "ingredients": list(entry["shortages"].keys())},
@@ -67,7 +69,9 @@ def expiry_estimates():
         for ingredient_id, batches in grouped.items():
             first = min(batch["expires_at"] for batch in batches)
             _alert(
-                c, "expiry", "expiry:" + ",".join(str(batch["id"]) for batch in batches),
+                c,
+                "expiry",
+                "expiry:" + ",".join(str(batch["id"]) for batch in batches),
                 batches[0]["display"] + " may need using soon",
                 "Rough estimate only: bought items like this usually keep until about " + first + ". Check it yourself.",
                 {"ingredient_id": ingredient_id, "estimate": first},
@@ -91,7 +95,9 @@ def stock_count_reminder():
     cycle = base + ":" + str((services.today() - services.parse_date(base)).days // 14)
     with db.tx() as c:
         _alert(
-            c, "stock_count", "stock_count:" + cycle,
+            c,
+            "stock_count",
+            "stock_count:" + cycle,
             "Time for a quick pantry check",
             "It has been two weeks. Confirm what is really left so the plan stays accurate.",
         )
@@ -109,7 +115,9 @@ def planning_reminder():
         return
     with db.tx() as c:
         _alert(
-            c, "plan", "plan:" + services.today().isoformat(),
+            c,
+            "plan",
+            "plan:" + services.today().isoformat(),
             "Nothing planned for the next days",
             "Pick a few meals so the shopping list can be built.",
         )
@@ -122,7 +130,9 @@ def period_reports():
     with db.tx() as c:
         for shopping in finished:
             _alert(
-                c, "period", "period:" + str(shopping["id"]),
+                c,
+                "period",
+                "period:" + str(shopping["id"]),
                 "Your plan " + shopping["range_start"] + " to " + shopping["range_end"] + " is over",
                 "See what ran short and what is left over.",
                 {"list_id": shopping["id"]},

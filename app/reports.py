@@ -34,13 +34,17 @@ def finance(start=None, end=None, period="week"):
     window = (start, end + " 23:59:59")
     purchase_filter = "source = 'purchase' AND price_total IS NOT NULL AND purchased_at BETWEEN ? AND ?"
     spending = db.rows(
-        "SELECT " + PERIODS[period] + " AS bucket, ROUND(SUM(price_total), 2) AS total, COUNT(*) AS items FROM batches WHERE "
-        + purchase_filter + " GROUP BY bucket ORDER BY bucket",
+        "SELECT "
+        + PERIODS[period]
+        + " AS bucket, ROUND(SUM(price_total), 2) AS total, COUNT(*) AS items FROM batches WHERE "
+        + purchase_filter
+        + " GROUP BY bucket ORDER BY bucket",
         window,
     )
     stores = db.rows(
         "SELECT COALESCE(store, 'Unknown') AS store, ROUND(SUM(price_total), 2) AS total, COUNT(DISTINCT session_id) AS trips, COUNT(*) AS items FROM batches WHERE "
-        + purchase_filter + " GROUP BY COALESCE(store, 'Unknown') ORDER BY total DESC",
+        + purchase_filter
+        + " GROUP BY COALESCE(store, 'Unknown') ORDER BY total DESC",
         window,
     )
     categories = db.rows(
@@ -52,7 +56,9 @@ def finance(start=None, end=None, period="week"):
         window,
     )
     waste = db.rows(
-        "SELECT " + EVENT_PERIODS[period] + " AS bucket, ROUND(SUM(value), 2) AS total FROM events WHERE kind = 'waste' AND at BETWEEN ? AND ? GROUP BY bucket ORDER BY bucket",
+        "SELECT "
+        + EVENT_PERIODS[period]
+        + " AS bucket, ROUND(SUM(value), 2) AS total FROM events WHERE kind = 'waste' AND at BETWEEN ? AND ? GROUP BY bucket ORDER BY bucket",
         window,
     )
     waste_items = db.rows(
@@ -64,7 +70,9 @@ def finance(start=None, end=None, period="week"):
         (start, end),
     )
     meal_buckets = db.rows(
-        "SELECT " + MEAL_PERIODS[period] + " AS bucket, ROUND(SUM(cost), 2) AS total, COUNT(*) AS meals, ROUND(SUM(cost) / NULLIF(SUM(servings), 0), 2) AS per_serving FROM meals WHERE status = 'cooked' AND date BETWEEN ? AND ? GROUP BY bucket ORDER BY bucket",
+        "SELECT "
+        + MEAL_PERIODS[period]
+        + " AS bucket, ROUND(SUM(cost), 2) AS total, COUNT(*) AS meals, ROUND(SUM(cost) / NULLIF(SUM(servings), 0), 2) AS per_serving FROM meals WHERE status = 'cooked' AND date BETWEEN ? AND ? GROUP BY bucket ORDER BY bucket",
         (start, end),
     )
     recipe_costs = db.rows(
@@ -75,7 +83,9 @@ def finance(start=None, end=None, period="week"):
     total_waste = round(sum(entry["total"] or 0 for entry in waste), 2)
     days = max(1, (services.parse_date(end) - services.parse_date(start)).days + 1)
     return {
-        "start": start, "end": end, "period": period,
+        "start": start,
+        "end": end,
+        "period": period,
         "summary": {
             "spent": total_spent,
             "waste": total_waste,
@@ -133,12 +143,32 @@ def nutrition(start=None, end=None):
     )
     by_day = {}
     for entry in meals:
-        by_day[entry["date"]] = {"date": entry["date"], "meal_kcal": entry["kcal"] or 0, "snack_kcal": 0, "protein": entry["protein"] or 0,
-                                 "fat": entry["fat"] or 0, "carbs": entry["carbs"] or 0, "fiber": entry["fiber"] or 0,
-                                 "meals": entry["meals"], "servings": entry["servings"] or 0}
+        by_day[entry["date"]] = {
+            "date": entry["date"],
+            "meal_kcal": entry["kcal"] or 0,
+            "snack_kcal": 0,
+            "protein": entry["protein"] or 0,
+            "fat": entry["fat"] or 0,
+            "carbs": entry["carbs"] or 0,
+            "fiber": entry["fiber"] or 0,
+            "meals": entry["meals"],
+            "servings": entry["servings"] or 0,
+        }
     for entry in snacks:
-        day = by_day.setdefault(entry["date"], {"date": entry["date"], "meal_kcal": 0, "snack_kcal": 0, "protein": 0, "fat": 0,
-                                                "carbs": 0, "fiber": 0, "meals": 0, "servings": 0})
+        day = by_day.setdefault(
+            entry["date"],
+            {
+                "date": entry["date"],
+                "meal_kcal": 0,
+                "snack_kcal": 0,
+                "protein": 0,
+                "fat": 0,
+                "carbs": 0,
+                "fiber": 0,
+                "meals": 0,
+                "servings": 0,
+            },
+        )
         day["snack_kcal"] += entry["kcal"] or 0
         for key in ("protein", "fat", "carbs", "fiber"):
             day[key] += entry[key] or 0
@@ -159,9 +189,7 @@ def nutrition(start=None, end=None):
         for key in ("kcal", "protein", "fat", "carbs", "fiber"):
             week[key] = round(week[key], 1)
         week_list.append(week)
-    incomplete = db.scalar(
-        "SELECT COUNT(*) FROM meals WHERE status = 'cooked' AND date BETWEEN ? AND ? AND kcal IS NULL", (start, end)
-    )
+    incomplete = db.scalar("SELECT COUNT(*) FROM meals WHERE status = 'cooked' AND date BETWEEN ? AND ? AND kcal IS NULL", (start, end))
     return {"start": start, "end": end, "days": days, "weeks": week_list, "incomplete_meals": incomplete}
 
 
@@ -176,13 +204,27 @@ def period_report(list_id):
         "SELECT b.ingredient_id, SUM(b.qty_initial) AS qty, SUM(b.price_total) AS spent FROM batches b JOIN shopping_sessions s ON s.id = b.session_id WHERE s.list_id = ? AND b.pending_unit IS NULL GROUP BY b.ingredient_id",
         (list_id,),
     )
-    ids = set(entry["ingredient_id"] for entry in bought)
-    used = {entry["ingredient_id"]: entry["qty"] for entry in db.rows(
-        "SELECT ingredient_id, SUM(qty) AS qty FROM events WHERE kind IN ('cook', 'snack') AND at BETWEEN ? AND ? GROUP BY ingredient_id", window)}
-    wasted = {entry["ingredient_id"]: entry["qty"] for entry in db.rows(
-        "SELECT ingredient_id, SUM(qty) AS qty FROM events WHERE kind = 'waste' AND at BETWEEN ? AND ? GROUP BY ingredient_id", window)}
-    short = {entry["ingredient_id"]: entry["qty"] for entry in db.rows(
-        "SELECT ingredient_id, SUM(qty) AS qty FROM events WHERE kind IN ('cook_shortfall', 'snack_shortfall') AND at BETWEEN ? AND ? GROUP BY ingredient_id", window)}
+    ids = {entry["ingredient_id"] for entry in bought}
+    used = {
+        entry["ingredient_id"]: entry["qty"]
+        for entry in db.rows(
+            "SELECT ingredient_id, SUM(qty) AS qty FROM events WHERE kind IN ('cook', 'snack') AND at BETWEEN ? AND ? GROUP BY ingredient_id",
+            window,
+        )
+    }
+    wasted = {
+        entry["ingredient_id"]: entry["qty"]
+        for entry in db.rows(
+            "SELECT ingredient_id, SUM(qty) AS qty FROM events WHERE kind = 'waste' AND at BETWEEN ? AND ? GROUP BY ingredient_id", window
+        )
+    }
+    short = {
+        entry["ingredient_id"]: entry["qty"]
+        for entry in db.rows(
+            "SELECT ingredient_id, SUM(qty) AS qty FROM events WHERE kind IN ('cook_shortfall', 'snack_shortfall') AND at BETWEEN ? AND ? GROUP BY ingredient_id",
+            window,
+        )
+    }
     ids |= set(short)
     stock = services.stock_map()
     ingredients = services.ingredient_map(ids)
@@ -192,17 +234,29 @@ def period_report(list_id):
         if not ingredient:
             continue
         entry = next((item for item in bought if item["ingredient_id"] == ingredient_id), {"qty": 0, "spent": 0})
-        lines.append({
-            "ingredient_id": ingredient_id, "display": services.display_name(ingredient), "icon": ingredient.get("icon"),
-            "unit": ingredient["unit"], "bought": entry["qty"] or 0, "spent": round(entry["spent"] or 0, 2),
-            "used": used.get(ingredient_id, 0), "wasted": wasted.get(ingredient_id, 0), "short": short.get(ingredient_id, 0),
-            "left": stock.get(ingredient_id, 0),
-        })
+        lines.append(
+            {
+                "ingredient_id": ingredient_id,
+                "display": services.display_name(ingredient),
+                "icon": ingredient.get("icon"),
+                "unit": ingredient["unit"],
+                "bought": entry["qty"] or 0,
+                "spent": round(entry["spent"] or 0, 2),
+                "used": used.get(ingredient_id, 0),
+                "wasted": wasted.get(ingredient_id, 0),
+                "short": short.get(ingredient_id, 0),
+                "left": stock.get(ingredient_id, 0),
+            }
+        )
     lines.sort(key=lambda line: (-line["short"], -line["left"], line["display"]))
     planned = db.scalar("SELECT COUNT(*) FROM meals WHERE date BETWEEN ? AND ?", (start, end))
     cooked = db.scalar("SELECT COUNT(*) FROM meals WHERE status = 'cooked' AND date BETWEEN ? AND ?", (start, end))
     return {
-        "list_id": list_id, "start": start, "end": end, "planned_meals": planned, "cooked_meals": cooked,
+        "list_id": list_id,
+        "start": start,
+        "end": end,
+        "planned_meals": planned,
+        "cooked_meals": cooked,
         "shortages": [line for line in lines if line["short"] > 0],
         "surplus": [line for line in lines if line["left"] > 0 and line["short"] <= 0],
         "lines": lines,
@@ -210,7 +264,9 @@ def period_report(list_id):
 
 
 def periods():
-    return db.rows("SELECT id, range_start, range_end, status, closed_at FROM shopping_lists WHERE range_start IS NOT NULL ORDER BY id DESC LIMIT 30")
+    return db.rows(
+        "SELECT id, range_start, range_end, status, closed_at FROM shopping_lists WHERE range_start IS NOT NULL ORDER BY id DESC LIMIT 30"
+    )
 
 
 EXPORTS = {

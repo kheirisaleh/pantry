@@ -14,12 +14,17 @@ static = os.path.join(out, "static")
 for folder in ("icons", "fonts", "vendor", "m"):
     os.makedirs(os.path.join(static, folder), exist_ok=True)
 
-icons = json.load(open(os.path.join(modules, "@iconify-json/fluent-emoji-flat/icons.json")))
+with open(os.path.join(modules, "@iconify-json/fluent-emoji-flat/icons.json")) as handle:
+    icons = json.load(handle)
 width = icons.get("width", 32)
 height = icons.get("height", 32)
-for name in json.load(open(os.path.join(app, "icon_names.json"))):
+with open(os.path.join(app, "icon_names.json")) as handle:
+    icon_names = json.load(handle)
+for name in icon_names:
     icon = icons["icons"][name]
-    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {} {}">{}</svg>'.format(icon.get("width", width), icon.get("height", height), icon["body"])
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {} {}">{}</svg>'.format(
+        icon.get("width", width), icon.get("height", height), icon["body"]
+    )
     with open(os.path.join(static, "icons", name + ".svg"), "w") as handle:
         handle.write(svg)
 with open(os.path.join(static, "icons", "ATTRIBUTION.txt"), "w") as handle:
@@ -38,7 +43,12 @@ shutil.copy(os.path.join(modules, "chart.js/dist/chart.umd.min.js"), os.path.joi
 shutil.copy(os.path.join(modules, "chart.js/LICENSE.md"), os.path.join(static, "vendor", "CHARTJS_LICENSE.md"))
 
 for size in (180, 192, 512):
-    cairosvg.svg2png(url=os.path.join(app, "static", "logo.svg"), write_to=os.path.join(static, "m", "icon-{}.png".format(size)), output_width=size, output_height=size)
+    cairosvg.svg2png(
+        url=os.path.join(app, "static", "logo.svg"),
+        write_to=os.path.join(static, "m", "icon-{}.png".format(size)),
+        output_width=size,
+        output_height=size,
+    )
 pan = cairosvg.svg2png(url=os.path.join(static, "icons", "shallow-pan-of-food.svg"), output_width=600, output_height=600)
 for size in ():
     scale = size * 4

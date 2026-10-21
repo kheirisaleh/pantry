@@ -14,6 +14,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATA_DIR", str(tmp_path))
     db.set_path(str(tmp_path / "pantry.db"))
     from fastapi.testclient import TestClient
+
     from app.main import app
 
     with TestClient(app) as test_client:

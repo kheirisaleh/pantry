@@ -5,12 +5,114 @@ from app import ai, db, services
 H = {"x-user-id": "1"}
 
 CATALOG = {
-    "berenj": dict(name_en="Basmati rice", name_fa="برنج", name_de="Basmatireis", category="grains", kind="food", unit="g", sold_by_piece=False, piece_amount=0, kcal=350, protein=7, fat=1, carbs=78, fiber=1, tolerance_pct=0, shelf_days=365, icon="cooked-rice"),
-    "goosht charkh karde": dict(name_en="Ground beef", name_fa="گوشت چرخ کرده", name_de="Rinderhack", category="meat", kind="food", unit="g", sold_by_piece=False, piece_amount=0, kcal=250, protein=20, fat=18, carbs=0, fiber=0, tolerance_pct=0, shelf_days=2, icon="cut-of-meat"),
-    "loobia sabz": dict(name_en="Green beans", name_fa="لوبیا سبز", name_de="Gruene Bohnen", category="vegetables", kind="food", unit="g", sold_by_piece=False, piece_amount=0, kcal=31, protein=2, fat=0, carbs=7, fiber=3, tolerance_pct=10, shelf_days=5, icon="pea-pod"),
-    "kahoo": dict(name_en="Lettuce", name_fa="کاهو", name_de="Salat", category="vegetables", kind="food", unit="g", sold_by_piece=True, piece_amount=300, kcal=15, protein=1, fat=0, carbs=3, fiber=1, tolerance_pct=20, shelf_days=5, icon="leafy-green"),
-    "namak": dict(name_en="Salt", name_fa="نمک", name_de="Salz", category="condiments", kind="staple", unit="g", sold_by_piece=False, piece_amount=0, kcal=0, protein=0, fat=0, carbs=0, fiber=0, tolerance_pct=0, shelf_days=0, icon="salt"),
-    "panir": dict(name_en="Feta cheese", name_fa="پنیر", name_de="Feta", category="dairy", kind="food", unit="g", sold_by_piece=False, piece_amount=0, kcal=260, protein=14, fat=21, carbs=4, fiber=0, tolerance_pct=0, shelf_days=14, icon="cheese-wedge"),
+    "berenj": dict(
+        name_en="Basmati rice",
+        name_fa="برنج",
+        name_de="Basmatireis",
+        category="grains",
+        kind="food",
+        unit="g",
+        sold_by_piece=False,
+        piece_amount=0,
+        kcal=350,
+        protein=7,
+        fat=1,
+        carbs=78,
+        fiber=1,
+        tolerance_pct=0,
+        shelf_days=365,
+        icon="cooked-rice",
+    ),
+    "goosht charkh karde": dict(
+        name_en="Ground beef",
+        name_fa="گوشت چرخ کرده",
+        name_de="Rinderhack",
+        category="meat",
+        kind="food",
+        unit="g",
+        sold_by_piece=False,
+        piece_amount=0,
+        kcal=250,
+        protein=20,
+        fat=18,
+        carbs=0,
+        fiber=0,
+        tolerance_pct=0,
+        shelf_days=2,
+        icon="cut-of-meat",
+    ),
+    "loobia sabz": dict(
+        name_en="Green beans",
+        name_fa="لوبیا سبز",
+        name_de="Gruene Bohnen",
+        category="vegetables",
+        kind="food",
+        unit="g",
+        sold_by_piece=False,
+        piece_amount=0,
+        kcal=31,
+        protein=2,
+        fat=0,
+        carbs=7,
+        fiber=3,
+        tolerance_pct=10,
+        shelf_days=5,
+        icon="pea-pod",
+    ),
+    "kahoo": dict(
+        name_en="Lettuce",
+        name_fa="کاهو",
+        name_de="Salat",
+        category="vegetables",
+        kind="food",
+        unit="g",
+        sold_by_piece=True,
+        piece_amount=300,
+        kcal=15,
+        protein=1,
+        fat=0,
+        carbs=3,
+        fiber=1,
+        tolerance_pct=20,
+        shelf_days=5,
+        icon="leafy-green",
+    ),
+    "namak": dict(
+        name_en="Salt",
+        name_fa="نمک",
+        name_de="Salz",
+        category="condiments",
+        kind="staple",
+        unit="g",
+        sold_by_piece=False,
+        piece_amount=0,
+        kcal=0,
+        protein=0,
+        fat=0,
+        carbs=0,
+        fiber=0,
+        tolerance_pct=0,
+        shelf_days=0,
+        icon="salt",
+    ),
+    "panir": dict(
+        name_en="Feta cheese",
+        name_fa="پنیر",
+        name_de="Feta",
+        category="dairy",
+        kind="food",
+        unit="g",
+        sold_by_piece=False,
+        piece_amount=0,
+        kcal=260,
+        protein=14,
+        fat=21,
+        carbs=4,
+        fiber=0,
+        tolerance_pct=0,
+        shelf_days=14,
+        icon="cheese-wedge",
+    ),
 }
 
 
@@ -24,7 +126,15 @@ def fake_generate(prompt, schema, timeout=60):
             rice_id = db.scalar("SELECT id FROM ingredients WHERE name_en = 'Basmati rice'")
             return dict(CATALOG["berenj"], understood=True, same_as_id=rice_id, aliases=["reis"])
         return dict(CATALOG["namak"], understood=False, same_as_id=0, aliases=[])
-    return {"understood": True, "name_en": "Loobia Polo", "name_fa": "لوبیا پلو", "description": "Rice layered with beans and beef.", "tags": ["persian", "rice"], "cook_minutes": 75, "image_query": "loobia polo"}
+    return {
+        "understood": True,
+        "name_en": "Loobia Polo",
+        "name_fa": "لوبیا پلو",
+        "description": "Rice layered with beans and beef.",
+        "tags": ["persian", "rice"],
+        "cook_minutes": 75,
+        "image_query": "loobia polo",
+    }
 
 
 def drain(monkeypatch):
@@ -36,13 +146,20 @@ def drain(monkeypatch):
 
 def test_full_cycle(client, monkeypatch):
     today = date.fromisoformat(client.get("/api/bootstrap").json()["today"])
-    recipe = client.post("/api/recipes", headers=H, json={"name": "loobia polo", "slots": [
-        {"items": [{"name": "berenj", "amount": 100, "unit": "g"}]},
-        {"items": [{"name": "goosht charkh karde", "amount": 80, "unit": "g"}]},
-        {"items": [{"name": "loobia sabz", "amount": 70, "unit": "g"}]},
-        {"optional": True, "items": [{"name": "kahoo", "amount": 50, "unit": "g"}]},
-        {"items": [{"name": "namak", "amount": 3, "unit": "g"}]},
-    ]}).json()
+    recipe = client.post(
+        "/api/recipes",
+        headers=H,
+        json={
+            "name": "loobia polo",
+            "slots": [
+                {"items": [{"name": "berenj", "amount": 100, "unit": "g"}]},
+                {"items": [{"name": "goosht charkh karde", "amount": 80, "unit": "g"}]},
+                {"items": [{"name": "loobia sabz", "amount": 70, "unit": "g"}]},
+                {"optional": True, "items": [{"name": "kahoo", "amount": 50, "unit": "g"}]},
+                {"items": [{"name": "namak", "amount": 3, "unit": "g"}]},
+            ],
+        },
+    ).json()
     assert recipe["status"] == "pending"
     drain(monkeypatch)
     recipe = client.get("/api/recipes/" + str(recipe["id"])).json()
@@ -65,11 +182,31 @@ def test_full_cycle(client, monkeypatch):
 
     session = client.post("/api/shopping/sessions", headers=H, json={"store": "Rewe"}).json()
     items = {item["ingredient"]["display"]: item for item in session["list"]["items"]}
-    client.patch("/api/shopping/items/" + str(items["Basmati rice"]["id"]), headers=H, json={"checked": True, "bought_qty": 1000, "bought_unit": "g", "price": 3.49})
-    client.patch("/api/shopping/items/" + str(items["Ground beef"]["id"]), headers=H, json={"checked": True, "bought_qty": 500, "bought_unit": "g", "price": 5.99})
-    client.patch("/api/shopping/items/" + str(items["Lettuce"]["id"]), headers=H, json={"checked": True, "bought_qty": 1, "bought_unit": "pcs", "price": 0.99})
-    extra = client.post("/api/shopping/items", headers={**H, "x-op-id": "op-1"}, json={"name": "panir", "checked": True, "session_id": session["session_id"]}).json()
-    replay = client.post("/api/shopping/items", headers={**H, "x-op-id": "op-1"}, json={"name": "panir", "checked": True, "session_id": session["session_id"]}).json()
+    client.patch(
+        "/api/shopping/items/" + str(items["Basmati rice"]["id"]),
+        headers=H,
+        json={"checked": True, "bought_qty": 1000, "bought_unit": "g", "price": 3.49},
+    )
+    client.patch(
+        "/api/shopping/items/" + str(items["Ground beef"]["id"]),
+        headers=H,
+        json={"checked": True, "bought_qty": 500, "bought_unit": "g", "price": 5.99},
+    )
+    client.patch(
+        "/api/shopping/items/" + str(items["Lettuce"]["id"]),
+        headers=H,
+        json={"checked": True, "bought_qty": 1, "bought_unit": "pcs", "price": 0.99},
+    )
+    extra = client.post(
+        "/api/shopping/items",
+        headers={**H, "x-op-id": "op-1"},
+        json={"name": "panir", "checked": True, "session_id": session["session_id"]},
+    ).json()
+    replay = client.post(
+        "/api/shopping/items",
+        headers={**H, "x-op-id": "op-1"},
+        json={"name": "panir", "checked": True, "session_id": session["session_id"]},
+    ).json()
     assert extra["item_id"] == replay["item_id"]
     client.patch("/api/shopping/items/" + str(extra["item_id"]), headers=H, json={"price": 2.29, "bought_qty": 200, "bought_unit": "g"})
     current = client.get("/api/shopping").json()["list"]
