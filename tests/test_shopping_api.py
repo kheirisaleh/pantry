@@ -111,13 +111,68 @@ def test_update_validation(client):
     assert client.patch("/api/shopping/items/999", json={"price": 1}).status_code == 404
 
 
-def test_buying_a_pack_learns_its_size(client, kitchen):
+def test_a_pack_size_typed_in_the_store_reaches_the_pantry(client, kitchen):
     recipe = kitchen.recipe("pasta", [{"items": [{"name": "panir", "amount": 250, "unit": "g"}]}])
     kitchen.meal(recipe["id"], 1, servings=2)
     built = client.post("/api/shopping/build", json={"start": kitchen.day(0), "end": kitchen.day(1)}).json()["list"]
     item = built["items"][0]
-    client.patch("/api/shopping/items/" + str(item["id"]), json={"checked": True, "bought_qty": 2, "bought_unit": "pack"})
-    assert db.scalar("SELECT package_amount FROM ingredients WHERE name_en = 'Feta cheese'") == 250.0
+    session = client.post("/api/shopping/sessions", json={"store": "Lidl"}).json()
+    path = "/api/shopping/items/" + str(item["id"])
+    client.patch(path, json={"checked": True, "bought_qty": 2, "bought_unit": "pack"})
+    assert db.scalar("SELECT package_amount FROM ingredients WHERE name_en = 'Feta cheese'") is None
+    client.patch(path, json={"bought_qty": 2, "bought_unit": "pack", "pack_size": 200})
+    client.post("/api/shopping/sessions/" + str(session["session_id"]) + "/finish")
+    assert db.scalar("SELECT package_amount FROM ingredients WHERE name_en = 'Feta cheese'") == 200.0
+    assert services.stock_map()[kitchen.ingredient_id("Feta cheese")] == 400.0
+
+
+def test_a_different_pack_size_counts_only_for_that_purchase(client, kitchen):
+    chicken = kitchen.ingredient("goosht charkh karde")["id"]
+    with db.tx() as c:
+        c.execute("UPDATE ingredients SET package_amount = 800 WHERE id = ?", (chicken,))
+    session = client.post("/api/shopping/sessions", json={"store": "Rewe"}).json()
+    added = client.post("/api/shopping/items", json={"ingredient_id": chicken, "checked": True, "session_id": session["session_id"]}).json()
+    client.patch(
+        "/api/shopping/items/" + str(added["item_id"]), json={"bought_qty": 1, "bought_unit": "pack", "pack_size": 600, "unit_price": 4.99}
+    )
+    client.post("/api/shopping/sessions/" + str(session["session_id"]) + "/finish")
+    assert services.stock_map()[chicken] == 600.0
+    assert db.scalar("SELECT package_amount FROM ingredients WHERE id = ?", (chicken,)) == 800.0
+    assert db.scalar("SELECT price_total FROM batches WHERE ingredient_id = ?", (chicken,)) == 4.99
+
+
+def test_price_each_is_multiplied_by_the_count(client):
+    added = client.post("/api/shopping/items", json={"name": "tomato paste"}).json()
+    path = "/api/shopping/items/" + str(added["item_id"])
+    listing = client.patch(path, json={"checked": True, "bought_qty": 3, "bought_unit": "pcs", "unit_price": 1.29}).json()["list"]
+    item = listing["items"][0]
+    assert item["price"] == 3.87 and item["unit_price"] == 1.29
+    assert listing["active_session"]["total"] == 3.87
+    listing = client.patch(path, json={"bought_qty": 2, "bought_unit": "pcs"}).json()["list"]
+    assert listing["items"][0]["price"] == 2.58
+    listing = client.patch(path, json={"bought_qty": 500, "bought_unit": "g", "unit_price": 6}).json()["list"]
+    assert listing["items"][0]["price"] == 3.0
+    listing = client.patch(path, json={"price": 4.5, "unit_price": None}).json()["list"]
+    assert listing["items"][0]["price"] == 4.5 and listing["items"][0]["unit_price"] is None
+    listing = client.patch(path, json={"bought_qty": 5, "bought_unit": "pcs"}).json()["list"]
+    assert listing["items"][0]["price"] == 4.5
+
+
+def test_a_ticked_item_bought_short_does_not_spawn_a_second_row(client, kitchen):
+    planned(kitchen)
+    built = client.post("/api/shopping/build", json={"start": kitchen.day(0), "end": kitchen.day(2)}).json()["list"]
+    rice = next(item for item in built["items"] if item["ingredient"]["display"] == "Basmati rice")
+    session = client.post("/api/shopping/sessions", json={"store": "Aldi"}).json()
+    path = "/api/shopping/items/" + str(rice["id"])
+    listing = client.patch(path, json={"checked": True, "bought_qty": 100, "bought_unit": "g"}).json()["list"]
+    assert [item["ingredient"]["display"] for item in listing["items"]].count("Basmati rice") == 1
+    listing = client.patch(path, json={"checked": False, "session_id": None}).json()["list"]
+    rows = [item for item in listing["items"] if item["ingredient"]["display"] == "Basmati rice"]
+    assert len(rows) == 1 and not rows[0]["checked"] and rows[0]["needed_qty"] == 500.0
+    client.patch(path, json={"checked": True, "bought_qty": 100, "bought_unit": "g"})
+    listing = client.post("/api/shopping/sessions/" + str(session["session_id"]) + "/finish").json()["list"]
+    rest = [item for item in listing["items"] if item["ingredient"]["display"] == "Basmati rice" and not item["committed"]]
+    assert len(rest) == 1 and rest[0]["needed_qty"] == 400.0
 
 
 def test_close_list_commits_and_warns_about_skipped_items(client, kitchen):

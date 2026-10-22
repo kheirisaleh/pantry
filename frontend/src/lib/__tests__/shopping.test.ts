@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { amountHint, closeListMessage, defaultUnit, emptyList, grouped, needText, placeholderIngredient, priceText, sessionCount, sessionTotal } from "../shopping";
+import { amountHint, closeListMessage, defaultPriceMode, defaultSize, defaultUnit, emptyList, grouped, lineTotal, needsSize, needText, perLabel, placeholderIngredient, priceText, sessionCount, sessionTotal } from "../shopping";
 import type { ShoppingItem } from "../types";
 
 function item(over: Partial<ShoppingItem> = {}, ingredient: Partial<ShoppingItem["ingredient"]> = {}): ShoppingItem {
@@ -54,5 +54,30 @@ describe("shopping", () => {
     expect(closeListMessage(emptyList())).toBe("Ticked items go into the pantry.");
     expect(priceText(2.5)).toBe("2,5");
     expect(priceText(null)).toBe("");
+  });
+  it("multiplies a price each by the count and reads weights per kilo", () => {
+    expect(lineTotal(1.29, 3, "pcs")).toBe(3.87);
+    expect(lineTotal(4.99, null, "pack")).toBe(4.99);
+    expect(lineTotal(6, 500, "g")).toBe(3);
+    expect(lineTotal(2.5, 1.5, "kg")).toBe(3.75);
+    expect(lineTotal(null, 3, "pcs")).toBeNull();
+    expect(perLabel("pack")).toBe("/pack");
+    expect(perLabel("g")).toBe("/kg");
+    expect(perLabel("ml")).toBe("/l");
+  });
+
+  it("picks price mode and pack size from what is known", () => {
+    expect(defaultPriceMode(item(), "pack")).toBe("each");
+    expect(defaultPriceMode(item(), "g")).toBe("total");
+    expect(defaultPriceMode(item({ price: 2 }), "pack")).toBe("total");
+    expect(defaultPriceMode(item({ unit_price: 1, price: 3 }), "g")).toBe("each");
+    expect(needsSize(item(), "pack")).toBe(true);
+    expect(needsSize(item(), "pcs")).toBe(true);
+    expect(needsSize(item({}, { unit: "pcs" }), "pcs")).toBe(false);
+    expect(needsSize(item(), "kg")).toBe(false);
+    expect(defaultSize(item({}, { package_amount: 800 }), "pack")).toBe(800);
+    expect(defaultSize(item({ pack_size: 600 }, { package_amount: 800 }), "pack")).toBe(600);
+    expect(defaultSize(item({}, { piece_amount: 120 }), "pcs")).toBe(120);
+    expect(defaultSize(item(), "g")).toBeNull();
   });
 });

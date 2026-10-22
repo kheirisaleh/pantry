@@ -72,3 +72,35 @@ export function priceText(value: number | null | undefined): string {
 export function sessionLabel(store: string, count: number, total: number): string {
   return "At " + store + ", " + String(count) + " item" + (count === 1 ? "" : "s") + " " + money(total);
 }
+
+export type PriceMode = "each" | "total";
+
+export function needsSize(item: ShoppingItem, unit: ShopUnit): boolean {
+  return unit === "pack" || (unit === "pcs" && item.ingredient.unit !== "pcs");
+}
+
+export function defaultSize(item: ShoppingItem, unit: ShopUnit): number | null {
+  if (!needsSize(item, unit)) return null;
+  if (item.pack_size) return item.pack_size;
+  return (unit === "pack" ? item.ingredient.package_amount : item.ingredient.piece_amount) || null;
+}
+
+export function defaultPriceMode(item: ShoppingItem, unit: ShopUnit): PriceMode {
+  if (item.unit_price !== null && item.unit_price !== undefined) return "each";
+  if (item.price !== null && item.price !== undefined) return "total";
+  return unit === "pack" || unit === "pcs" ? "each" : "total";
+}
+
+export function perLabel(unit: ShopUnit): string {
+  if (unit === "pack") return "/pack";
+  if (unit === "pcs") return "/pc";
+  if (unit === "ml" || unit === "l") return "/l";
+  return "/kg";
+}
+
+export function lineTotal(unitPrice: number | null, amount: number | null, unit: ShopUnit): number | null {
+  if (unitPrice === null) return null;
+  let count = amount || 1;
+  if (unit === "g" || unit === "ml") count = count / 1000;
+  return Math.round(unitPrice * count * 100) / 100;
+}

@@ -1,10 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View } from "@/app/View";
 import { openBuildListSheet } from "@/features/buildList";
 import { activeSession, addItem, closeList, finishSession, loadShop, patchItem, pauseSession, removeItem, resumeSession, shopStore } from "@/features/shop";
 import { openStoreSheet } from "@/features/storeSheet";
 import { money, parseNumber, qty, shortDate, trim } from "@/lib/format";
-import { amountHint, closeListMessage, defaultUnit, grouped, needText, priceText, sessionCount, sessionTotal } from "@/lib/shopping";
+import { amountHint, closeListMessage, defaultPriceMode, defaultSize, defaultUnit, grouped, lineTotal, needsSize, needText, perLabel, type PriceMode, priceText, sessionCount, sessionTotal } from "@/lib/shopping";
 import { useStore } from "@/lib/store";
 import type { ShopUnit, ShoppingItem, ShoppingList, ShoppingSession } from "@/lib/types";
 import { useResource } from "@/lib/useResource";
@@ -16,32 +16,114 @@ import { toast } from "@/ui/toast";
 
 const quiet = () => undefined;
 
-function ShopRow({ item, list }: { item: ShoppingItem; list: ShoppingList }) {
+function amountText(item: ShoppingItem): string {
+  return item.bought_qty ? trim(item.bought_qty, 2) : "";
+}
+
+function sizeText(item: ShoppingItem, unit: ShopUnit): string {
+  const size = defaultSize(item, unit);
+  return size ? trim(size, 1) : "";
+}
+
+function priceFor(item: ShoppingItem, mode: PriceMode): string {
+  return priceText(mode === "each" ? item.unit_price : item.price);
+}
+
+function readNumber(text: string, label: string, allowZero = false): { ok: boolean; value: number | null } {
+  if (!text.trim()) return { ok: true, value: null };
+  const value = parseNumber(text);
+  if (value === null || value < 0 || (!allowZero && value === 0)) {
+    toast(label + " must be a number" + (allowZero ? "" : " above zero"), true);
+    return { ok: false, value: null };
+  }
+  return { ok: true, value };
+}
+
+interface Draft {
+  amount: string;
+  unit: ShopUnit;
+  size: string;
+  price: string;
+  mode: PriceMode;
+}
+
+function ShopRow({ item }: { item: ShoppingItem }) {
   const ingredient = item.ingredient;
   const [unit, setUnit] = useState<ShopUnit>(() => defaultUnit(item));
-  const [amount, setAmount] = useState(item.bought_qty ? trim(item.bought_qty, 2) : "");
-  const [price, setPrice] = useState(priceText(item.price));
+  const [mode, setMode] = useState<PriceMode>(() => defaultPriceMode(item, defaultUnit(item)));
+  const [amount, setAmount] = useState(() => amountText(item));
+  const [size, setSize] = useState(() => sizeText(item, defaultUnit(item)));
+  const [price, setPrice] = useState(() => priceFor(item, defaultPriceMode(item, defaultUnit(item))));
+  const editing = useRef(false);
   const need = needText(item);
   const checked = Boolean(item.checked);
 
-  function toggle() {
-    const session = activeSession(list);
-    if (!checked && !session) {
-      openStoreSheet();
+  useEffect(() => {
+    if (editing.current) return;
+    const nextUnit = defaultUnit(item);
+    const nextMode = defaultPriceMode(item, nextUnit);
+    setUnit(nextUnit);
+    setMode(nextMode);
+    setAmount(amountText(item));
+    setSize(sizeText(item, nextUnit));
+    setPrice(priceFor(item, nextMode));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.bought_qty, item.bought_unit, item.pack_size, item.price, item.unit_price]);
+
+  function payload(draft: Draft): Partial<ShoppingItem> | null {
+    const counted = readNumber(draft.amount.trim() ? draft.amount : amountHint(item, draft.unit), "Amount");
+    const sized = needsSize(item, draft.unit) ? readNumber(draft.size, "Pack size") : { ok: true, value: null };
+    const priced = readNumber(draft.price, "Price", true);
+    if (!counted.ok) setAmount(amountText(item));
+    if (!sized.ok) setSize(sizeText(item, draft.unit));
+    if (!priced.ok) setPrice(priceFor(item, draft.mode));
+    if (!counted.ok || !sized.ok || !priced.ok) return null;
+    const data: Partial<ShoppingItem> = { bought_qty: counted.value, bought_unit: draft.unit, pack_size: sized.value };
+    if (draft.mode === "each" && priced.value !== null) {
+      data.unit_price = priced.value;
+      data.price = lineTotal(priced.value, counted.value, draft.unit);
+    } else {
+      data.unit_price = null;
+      data.price = priced.value;
+    }
+    return data;
+  }
+
+  function current(change: Partial<Draft> = {}): Draft {
+    return { amount, unit, size, price, mode, ...change };
+  }
+
+  function same(data: Partial<ShoppingItem>): boolean {
+    return (
+      (data.bought_qty ?? null) === (item.bought_qty ?? null) &&
+      (data.bought_unit ?? null) === (item.bought_unit ?? null) &&
+      (data.pack_size ?? null) === (item.pack_size ?? null) &&
+      (data.unit_price ?? null) === (item.unit_price ?? null) &&
+      (data.price ?? null) === (item.price ?? null)
+    );
+  }
+
+  function save(change: Partial<Draft> = {}) {
+    const data = payload(current(change));
+    if (data && !same(data)) void patchItem(item, data).catch(quiet);
+  }
+
+  function tick() {
+    const session = activeSession(shopStore.get());
+    if (!session) {
+      openStoreSheet(tick);
       return;
     }
-    const data: Partial<ShoppingItem> = { checked: checked ? 0 : 1 };
-    if (!checked && session) {
-      data.session_id = session.id;
-      if (!item.bought_qty) {
-        const typed = parseNumber(amount);
-        if (typed) {
-          data.bought_qty = typed;
-          data.bought_unit = unit;
-        }
-      }
-    } else data.session_id = null;
-    void patchItem(item, data).catch(quiet);
+    const filled = amount.trim() ? amount : amountHint(item, unit);
+    if (filled !== amount) setAmount(filled);
+    const data = payload(current({ amount: filled }));
+    if (!data) return;
+    void patchItem(item, { ...data, checked: 1, session_id: session.id }).catch(quiet);
+  }
+
+  function toggle() {
+    if (checked) void patchItem(item, { checked: 0, session_id: null }).catch(quiet);
+    else tick();
   }
 
   let source = null;
@@ -63,6 +145,11 @@ function ShopRow({ item, list }: { item: ShoppingItem; list: ShoppingList }) {
     else source = <span>added by hand</span>;
   }
 
+  const sized = needsSize(item, unit);
+  const counted = parseNumber(amount) ?? parseNumber(amountHint(item, unit));
+  const each = mode === "each" ? parseNumber(price) : null;
+  const total = each !== null ? lineTotal(each, counted, unit) : null;
+
   return (
     <div className={"shop-row" + (checked ? " is-checked" : "")}>
       <button type="button" className="check" role="checkbox" aria-checked={checked} aria-label={"Bought " + ingredient.display} onClick={toggle}>
@@ -79,44 +166,77 @@ function ShopRow({ item, list }: { item: ShoppingItem; list: ShoppingList }) {
           {source}
         </div>
       </div>
-      <div className="shop-inputs">
-        <input
-          className="input num"
-          inputMode="decimal"
-          aria-label={"Amount of " + ingredient.display + " bought"}
-          placeholder={amountHint(item, unit)}
-          value={amount}
-          onChange={(event) => setAmount(event.target.value)}
-          onBlur={() => {
-            const value = parseNumber(amount);
-            if (value !== item.bought_qty) void patchItem(item, { bought_qty: value, bought_unit: unit }).catch(quiet);
-          }}
-        />
-        <ShopUnitSelect<ShopUnit>
-          className="input unit-select shop-unit"
-          value={unit}
-          onChange={(next) => {
-            setUnit(next);
-            if (next === "pack" && !ingredient.package_amount) toast("Set how much one pack holds in the details of " + ingredient.display + " so the pantry can count it");
-            void patchItem(item, { bought_unit: next }).catch(quiet);
-          }}
-        />
-        <input
-          className="input num"
-          inputMode="decimal"
-          aria-label={"Price of " + ingredient.display}
-          placeholder="€"
-          value={price}
-          onChange={(event) => setPrice(event.target.value)}
-          onBlur={() => {
-            const value = parseNumber(price);
-            if (value !== null && value < 0) {
-              toast("Price cannot be negative", true);
-              return;
-            }
-            if (value !== item.price) void patchItem(item, { price: value }).catch(quiet);
-          }}
-        />
+      <div
+        className="shop-inputs"
+        onFocus={() => {
+          editing.current = true;
+        }}
+        onBlur={() => {
+          editing.current = false;
+        }}
+      >
+        <div className="shop-fields">
+          <input
+            className="input num"
+            inputMode="decimal"
+            aria-label={"Amount of " + ingredient.display + " bought"}
+            placeholder={amountHint(item, unit)}
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            onBlur={() => save()}
+          />
+          <ShopUnitSelect<ShopUnit>
+            className="input unit-select shop-unit"
+            value={unit}
+            onChange={(next) => {
+              const nextSize = needsSize(item, next) ? size || sizeText(item, next) : "";
+              setUnit(next);
+              setSize(nextSize);
+              save({ unit: next, size: nextSize });
+            }}
+          />
+          <input
+            className="input num"
+            inputMode="decimal"
+            aria-label={"Price of " + ingredient.display + (mode === "each" ? " " + perLabel(unit).replace("/", "per ") : " in total")}
+            placeholder="€"
+            value={price}
+            onChange={(event) => setPrice(event.target.value)}
+            onBlur={() => save()}
+          />
+          <button
+            type="button"
+            className="btn small ghost price-mode"
+            aria-label={mode === "each" ? "Price is per unit, switch to total" : "Price is the total, switch to per unit"}
+            onClick={() => {
+              const next: PriceMode = mode === "each" ? "total" : "each";
+              setMode(next);
+              save({ mode: next });
+            }}
+          >
+            {mode === "each" ? "€" + perLabel(unit) : "€ total"}
+          </button>
+        </div>
+        {sized || (total !== null && (counted ?? 1) !== 1) ? (
+          <div className="shop-extra muted">
+            {sized ? (
+              <label className="shop-size">
+                <span>{unit === "pack" ? "1 pack =" : "1 pc ="}</span>
+                <input
+                  className="input num"
+                  inputMode="decimal"
+                  aria-label={"Size of one " + (unit === "pack" ? "pack" : "piece") + " of " + ingredient.display}
+                  placeholder="?"
+                  value={size}
+                  onChange={(event) => setSize(event.target.value)}
+                  onBlur={() => save()}
+                />
+                <span>{ingredient.unit}</span>
+              </label>
+            ) : null}
+            {total !== null && (counted ?? 1) !== 1 ? <span className="num shop-line-total">= {money(total)}</span> : null}
+          </div>
+        ) : null}
       </div>
       <button type="button" className="btn icon small ghost" aria-label={"Remove " + ingredient.display} onClick={() => void removeItem(item).catch(quiet)}>
         <Icon name="trash" />
@@ -197,14 +317,12 @@ export function ShopPage() {
             ) : (
               <>
                 <div className="shop-list">
-                  {grouped(open, (item) => item.ingredient.category).map((group) => (
-                    <div key={group.category}>
-                      <div className="group-title">{group.category}</div>
-                      {group.items.map((item) => (
-                        <ShopRow key={item.id} item={item} list={list} />
-                      ))}
-                    </div>
-                  ))}
+                  {grouped(open, (item) => item.ingredient.category).flatMap((group) => [
+                    <div key={"group-" + group.category} className="group-title">
+                      {group.category}
+                    </div>,
+                    ...group.items.map((item) => <ShopRow key={item.id} item={item} />),
+                  ])}
                 </div>
                 {done.length ? (
                   <details className="done-block">

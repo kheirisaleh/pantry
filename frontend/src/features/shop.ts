@@ -53,21 +53,47 @@ export async function startSession(store: string): Promise<void> {
   } else accept(result);
 }
 
+let inflight = 0;
+const chains = new Map<string, Promise<unknown>>();
+
+async function track<T>(work: () => Promise<T>): Promise<T> {
+  inflight += 1;
+  try {
+    return await work();
+  } finally {
+    inflight -= 1;
+  }
+}
+
+function settle(result: unknown): void {
+  if (inflight === 0) accept(result);
+}
+
+function resync(): void {
+  if (inflight === 0 && !readQueue().length) void loadShop().catch(() => undefined);
+}
+
 export async function patchItem(item: ShoppingItem, data: Partial<ShoppingItem> & { session_id?: Id | null }): Promise<void> {
   update((list) => ({ ...list, items: list.items.map((entry) => (entry.id === item.id ? { ...entry, ...data } : entry)) }));
-  const result = await mutate<{ list: ShoppingList }>("PATCH", "/api/shopping/items/" + String(item.id), data, { offline: true });
-  if (isQueued(result)) return;
-  const fresh = result.list.items.find((entry) => entry.id === item.id);
-  update((list) => ({
-    ...list,
-    items: list.items.map((entry) => (entry.id === item.id && fresh ? { ...entry, session_id: fresh.session_id } : entry)),
-    ...(readQueue().length ? {} : { sessions: result.list.sessions, active_session: result.list.active_session }),
-  }));
+  const key = String(item.id);
+  const previous = chains.get(key) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(() => mutate<{ list: ShoppingList }>("PATCH", "/api/shopping/items/" + key, data, { offline: true }));
+  chains.set(key, run);
+  let result: unknown;
+  try {
+    result = await track(() => run);
+  } catch (error) {
+    resync();
+    throw error;
+  } finally {
+    if (chains.get(key) === run) chains.delete(key);
+  }
+  if (!isQueued(result)) settle(result);
 }
 
 export async function removeItem(item: ShoppingItem): Promise<void> {
   update((list) => ({ ...list, items: list.items.filter((entry) => entry.id !== item.id) }));
-  accept(await mutate("DELETE", "/api/shopping/items/" + String(item.id), undefined, { offline: true }));
+  settle(await track(() => mutate("DELETE", "/api/shopping/items/" + String(item.id), undefined, { offline: true })));
 }
 
 export async function addItem(picked: { ingredient_id?: number; ingredient?: IngredientRef; name: string }): Promise<void> {
@@ -78,7 +104,7 @@ export async function addItem(picked: { ingredient_id?: number; ingredient?: Ing
     body.session_id = session.id;
   }
   const temp = "tmp-i-" + uid();
-  const result = await mutate("POST", "/api/shopping/items", body, { offline: true, temp });
+  const result = await track(() => mutate("POST", "/api/shopping/items", body, { offline: true, temp }));
   if (isQueued(result)) {
     update((list) => ({
       ...list,
@@ -92,12 +118,14 @@ export async function addItem(picked: { ingredient_id?: number; ingredient?: Ing
           session_id: session ? session.id : null,
           needed_qty: null,
           price: null,
+          unit_price: null,
+          pack_size: null,
           bought_qty: null,
           ingredient: picked.ingredient ?? placeholderIngredient(picked.name),
         },
       ],
     }));
-  } else accept(result);
+  } else settle(result);
 }
 
 export async function pauseSession(session: ShoppingSession): Promise<void> {

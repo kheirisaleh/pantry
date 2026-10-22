@@ -1308,6 +1308,24 @@ def refresh_open_list(c):
         recompute_auto(c, current["id"])
 
 
+def bought_base(ingredient, qty, unit, pack_size=None):
+    if not qty or not ingredient:
+        return None
+    unit = unit or ingredient.get("unit")
+    if pack_size and (unit == "pack" or (unit == "pcs" and ingredient.get("unit") != "pcs")):
+        return float(qty) * float(pack_size)
+    return logic.to_base(ingredient, qty, unit)
+
+
+def line_price(unit_price, qty, unit):
+    if unit_price is None:
+        return None
+    count = float(qty) if qty else 1.0
+    if unit in logic.MASS_UNITS:
+        count = count / 1000.0
+    return round(float(unit_price) * count, 2)
+
+
 def recompute_auto(c, list_id):
     shopping = db.row("SELECT * FROM shopping_lists WHERE id = ?", (list_id,))
     if not shopping or not shopping["range_start"]:
@@ -1319,16 +1337,16 @@ def recompute_auto(c, list_id):
     within = [(meal["id"], required) for meal, required in sequence if meal["date"] >= start]
     stock = stock_map()
     pending_bought = db.rows(
-        "SELECT ingredient_id, bought_qty, bought_unit FROM shopping_items WHERE list_id = ? AND checked = 1 AND committed = 0",
+        "SELECT ingredient_id, bought_qty, bought_unit, pack_size FROM shopping_items WHERE list_id = ? AND checked = 1 AND committed = 0",
         (list_id,),
     )
     for entry in pending_bought:
-        ingredient = ingredients.get(entry["ingredient_id"])
-        if ingredient and entry["bought_qty"]:
-            qty = logic.to_base(ingredient, entry["bought_qty"], entry["bought_unit"] or ingredient["unit"])
-            if qty:
-                stock[entry["ingredient_id"]] = stock.get(entry["ingredient_id"], 0.0) + qty
+        qty = bought_base(ingredients.get(entry["ingredient_id"]), entry["bought_qty"], entry["bought_unit"], entry["pack_size"])
+        if qty:
+            stock[entry["ingredient_id"]] = stock.get(entry["ingredient_id"], 0.0) + qty
     needs = logic.shopping_needs(stock, before, within, ingredients)
+    for entry in pending_bought:
+        needs.pop(entry["ingredient_id"], None)
     covered = {
         row["ingredient_id"] for row in db.rows("SELECT ingredient_id FROM shopping_items WHERE list_id = ? AND checked = 1", (list_id,))
     }
@@ -1339,7 +1357,7 @@ def recompute_auto(c, list_id):
         if ingredient_id not in needs:
             continue
         bought = db.rows(
-            "SELECT bought_qty, bought_unit FROM shopping_items WHERE list_id = ? AND ingredient_id = ? AND checked = 1",
+            "SELECT bought_qty, bought_unit, pack_size FROM shopping_items WHERE list_id = ? AND ingredient_id = ? AND checked = 1",
             (list_id, ingredient_id),
         )
         pending = db.scalar(
@@ -1347,16 +1365,18 @@ def recompute_auto(c, list_id):
         )
         ingredient = ingredients.get(ingredient_id) or {}
         if pending or any(
-            entry["bought_qty"] and logic.to_base(ingredient, entry["bought_qty"], entry["bought_unit"] or ingredient.get("unit")) is None
+            entry["bought_qty"] and bought_base(ingredient, entry["bought_qty"], entry["bought_unit"], entry["pack_size"]) is None
             for entry in bought
         ):
             unknown.add(ingredient_id)
     for ingredient_id in unknown:
         needs.pop(ingredient_id, None)
-    existing = {
-        entry["ingredient_id"]: entry
-        for entry in db.rows("SELECT * FROM shopping_items WHERE list_id = ? AND auto = 1 AND checked = 0 AND committed = 0", (list_id,))
-    }
+    existing = {}
+    for entry in db.rows("SELECT * FROM shopping_items WHERE list_id = ? AND auto = 1 AND checked = 0 AND committed = 0 ORDER BY id", (list_id,)):
+        if entry["ingredient_id"] in existing:
+            c.execute("DELETE FROM shopping_items WHERE id = ?", (entry["id"],))
+        else:
+            existing[entry["ingredient_id"]] = entry
     for ingredient_id, need in needs.items():
         if ingredient_id in existing:
             c.execute("UPDATE shopping_items SET needed_qty = ? WHERE id = ?", (need["qty"], existing[ingredient_id]["id"]))
@@ -1482,28 +1502,14 @@ def add_list_item(data, user_id=None):
     return {"item_id": item_id, "list": get_list(list_id)}
 
 
-def learn_size(c, ingredient_id, qty, unit, needed_qty):
-    ingredient = db.row("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,))
-    if not ingredient or not qty or not needed_qty or not unit:
-        return False
-    if logic.to_base(ingredient, qty, unit) is not None:
-        return False
-    base = ingredient.get("unit") or "g"
-    qty = float(qty)
-    needed = float(needed_qty)
-    if unit in logic.SCALED_UNITS:
-        unit, factor = logic.SCALED_UNITS[unit]
-        qty = qty * factor
-    if unit in logic.PACKAGE_UNITS:
-        c.execute("UPDATE ingredients SET package_amount = ? WHERE id = ?", (round(needed / qty, 3), ingredient_id))
-    elif unit == "pcs" and base in logic.MASS_UNITS:
-        c.execute("UPDATE ingredients SET piece_amount = ? WHERE id = ?", (round(needed / qty, 3), ingredient_id))
-    elif unit in logic.MASS_UNITS and base == "pcs":
-        c.execute("UPDATE ingredients SET piece_amount = ? WHERE id = ?", (round(qty / needed, 3), ingredient_id))
+def remember_size(c, ingredient, unit, size):
+    if unit == "pack" and not ingredient.get("package_amount"):
+        c.execute("UPDATE ingredients SET package_amount = ? WHERE id = ?", (round(float(size), 3), ingredient["id"]))
+    elif unit == "pcs" and ingredient.get("unit") in logic.MASS_UNITS and not ingredient.get("piece_amount"):
+        c.execute("UPDATE ingredients SET piece_amount = ? WHERE id = ?", (round(float(size), 3), ingredient["id"]))
     else:
-        return False
-    convert_pending_batches(c, ingredient_id)
-    return True
+        return
+    convert_pending_batches(c, ingredient["id"])
 
 
 def _check_item(c, item_id, data, user_id):
@@ -1541,9 +1547,22 @@ def update_list_item(item_id, data, user_id=None):
             )
         if "bought_unit" in data:
             c.execute("UPDATE shopping_items SET bought_unit = ? WHERE id = ?", (check_shop_unit(data["bought_unit"]), item_id))
-        if "price" in data:
+        if "pack_size" in data:
+            value = data["pack_size"]
+            c.execute(
+                "UPDATE shopping_items SET pack_size = ? WHERE id = ?",
+                (None if value in (None, "") else positive(value, "Pack size"), item_id),
+            )
+        unit_price = amount_or_none(data["unit_price"], "Price") if "unit_price" in data else None
+        if unit_price is not None:
+            c.execute("UPDATE shopping_items SET unit_price = ? WHERE id = ?", (round(unit_price, 2), item_id))
+        elif "price" in data:
             value = amount_or_none(data["price"], "Price")
-            c.execute("UPDATE shopping_items SET price = ? WHERE id = ?", (None if value is None else round(value, 2), item_id))
+            c.execute(
+                "UPDATE shopping_items SET price = ?, unit_price = NULL WHERE id = ?", (None if value is None else round(value, 2), item_id)
+            )
+        elif "unit_price" in data:
+            c.execute("UPDATE shopping_items SET unit_price = NULL, price = NULL WHERE id = ?", (item_id,))
         if "note" in data:
             c.execute("UPDATE shopping_items SET note = ? WHERE id = ?", (data["note"], item_id))
         if "checked" in data:
@@ -1552,8 +1571,9 @@ def update_list_item(item_id, data, user_id=None):
             else:
                 c.execute("UPDATE shopping_items SET checked = 0, session_id = NULL WHERE id = ?", (item_id,))
         current = db.row("SELECT * FROM shopping_items WHERE id = ?", (item_id,))
-        if current and current["checked"] and current["bought_qty"] and current["bought_unit"]:
-            learn_size(c, current["ingredient_id"], current["bought_qty"], current["bought_unit"], current["needed_qty"])
+        if current["unit_price"] is not None:
+            price = line_price(current["unit_price"], current["bought_qty"], current["bought_unit"])
+            c.execute("UPDATE shopping_items SET price = ? WHERE id = ?", (price, item_id))
         recompute_auto(c, item["list_id"])
     return get_list(item["list_id"])
 
@@ -1592,14 +1612,27 @@ def _commit_session(c, session, user_id):
                 unit = ingredient["unit"]
             else:
                 qty = 1
-                unit = (
+                unit = item["bought_unit"] or (
                     "pcs"
                     if ingredient["kind"] != "food" or ingredient["sold_by_piece"] or ingredient["unit"] == "pcs"
                     else ingredient["unit"]
                 )
-        learn_size(c, item["ingredient_id"], qty, unit, item["needed_qty"])
+        stock_qty, stock_unit = qty, unit
+        size = item["pack_size"]
+        if size and (unit == "pack" or (unit == "pcs" and ingredient["unit"] != "pcs")):
+            remember_size(c, ingredient, unit, size)
+            stock_qty, stock_unit = float(qty) * float(size), ingredient["unit"]
         add_stock(
-            c, item["ingredient_id"], qty, unit, item["price"], session["store"], user_id, "purchase", session["id"], session["started_at"]
+            c,
+            item["ingredient_id"],
+            stock_qty,
+            stock_unit,
+            item["price"],
+            session["store"],
+            user_id,
+            "purchase",
+            session["id"],
+            session["started_at"],
         )
         c.execute("UPDATE shopping_items SET committed = 1, bought_qty = ?, bought_unit = ? WHERE id = ?", (qty, unit, item["id"]))
     c.execute("UPDATE shopping_sessions SET status = 'finished', finished_at = ? WHERE id = ?", (iso_now(), session["id"]))
