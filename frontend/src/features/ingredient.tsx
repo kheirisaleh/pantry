@@ -274,6 +274,10 @@ function AdjustBody({ ingredient, mode, close, onDone }: { ingredient: Ingredien
 
   async function submit() {
     const value = parseNumber(amount);
+    if (amount.trim() && (value === null || value < 0 || (mode !== "count" && value === 0))) {
+      toast("The amount is not a number", true);
+      return;
+    }
     if (mode === "waste") await act("POST", "/api/inventory/" + String(ingredient.id) + "/waste", { qty: value, unit });
     else if (mode === "count") {
       if (value === null || value < 0) {

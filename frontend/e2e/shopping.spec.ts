@@ -56,3 +56,49 @@ test("ticking items works offline and syncs later", async ({ page, context, requ
   const checked = shopping.list.items.filter((item) => item.checked).map((item) => item.ingredient.display);
   expect(checked).toEqual(expect.arrayContaining(["Milk", "Eggs"]));
 });
+
+test("price each counts every pack, packs fill the pantry by their size and unticking is instant", async ({ page, request }) => {
+  const open = (await (await request.get("/api/shopping")).json()) as { list: { id: number } | null };
+  if (open.list) await request.post("/api/shopping/" + String(open.list.id) + "/close", { headers: { "X-User-Id": "1" } });
+  await signIn(page);
+  await page.goto("/shop");
+  await page.getByRole("button", { name: "Start shopping" }).click();
+  const store = page.getByRole("dialog", { name: "Where are you shopping?" });
+  await store.getByLabel("Store").fill("Rewe");
+  await store.getByRole("button", { name: "Start" }).click();
+  await expect(page.locator(".session-bar")).toBeVisible();
+
+  const adder = page.getByPlaceholder("Add an item: panir, kiri, Milch, toilet paper");
+  await adder.fill("lentils");
+  await page.keyboard.press("Enter");
+  const lentils = page.locator(".shop-row").filter({ hasText: /lentils/i });
+  await expect(lentils.getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
+  await lentils.getByLabel(/^Amount of/).fill("3");
+  await lentils.getByLabel(/^Price of/).fill("1,29");
+  await lentils.getByLabel(/^Price of/).blur();
+  await expect(lentils.locator(".shop-line-total")).toHaveText(/3,87\s€/);
+  await expect(page.locator(".session-total")).toHaveText(/3,87\s€/);
+
+  await lentils.getByRole("checkbox").click();
+  await expect(lentils.getByRole("checkbox")).toHaveAttribute("aria-checked", "false");
+  await expect(page.locator(".session-total")).toHaveText(/0,00\s€/);
+  await lentils.getByRole("checkbox").click();
+  await expect(page.locator(".session-total")).toHaveText(/3,87\s€/);
+
+  await adder.fill("rice");
+  await page.keyboard.press("Enter");
+  const rice = page.locator(".shop-row").filter({ hasText: /rice/i });
+  await expect(rice.getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
+  await rice.getByLabel("Unit", { exact: true }).selectOption("pack");
+  await rice.getByLabel(/^Size of one pack/).fill("1000");
+  await rice.getByLabel(/^Price of/).fill("4,99");
+  await rice.getByLabel(/^Price of/).blur();
+  await expect(page.locator(".session-total")).toHaveText(/8,86\s€/);
+
+  const before = (await (await request.get("/api/inventory")).json()) as { items: { display: string; stock: number }[] };
+  const had = before.items.find((item) => item.display === "Basmati rice")?.stock ?? 0;
+  await page.getByRole("button", { name: "Finish at this store" }).click();
+  await expect(page.getByText("Trip saved to the pantry")).toBeVisible();
+  const after = (await (await request.get("/api/inventory")).json()) as { items: { display: string; stock: number }[] };
+  expect(after.items.find((item) => item.display === "Basmati rice")?.stock).toBe(had + 1000);
+});

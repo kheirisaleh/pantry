@@ -267,6 +267,9 @@ def init():
         "ALTER TABLE recipes ADD COLUMN name_de TEXT",
         "ALTER TABLE shopping_items ADD COLUMN source TEXT NOT NULL DEFAULT 'app'",
         "ALTER TABLE meals ADD COLUMN source TEXT NOT NULL DEFAULT 'app'",
+        "ALTER TABLE shopping_items ADD COLUMN pack_size REAL",
+        "ALTER TABLE shopping_items ADD COLUMN unit_price REAL",
+        "ALTER TABLE events ADD COLUMN snack_id INTEGER",
     ):
         try:
             connection.execute(statement)

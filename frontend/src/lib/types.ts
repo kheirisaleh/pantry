@@ -277,13 +277,16 @@ export interface ShoppingItem {
   checked: number;
   bought_qty: number | null;
   bought_unit?: ShopUnit | null;
+  pack_size?: number | null;
   price: number | null;
+  unit_price?: number | null;
   session_id: Id | null;
   committed: number;
   source?: Source;
   ingredient: IngredientRef;
   pieces?: number | null;
   packages?: number;
+  unsure_stock?: { qty: number; unit: string }[];
 }
 
 export interface ShoppingSession {

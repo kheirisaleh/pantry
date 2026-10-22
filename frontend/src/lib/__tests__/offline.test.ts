@@ -86,4 +86,34 @@ describe("offline queue", () => {
     await flush();
     expect(fetchMock.mock.calls[1]?.[1]?.headers).toMatchObject({ "X-User-Id": "2" });
   });
+  it("keeps changes made while the queue is being replayed", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+    await mutate("PATCH", "/api/shopping/items/1", { checked: 1 }, { offline: true });
+    fetchMock.mockReset();
+    let release: (value: Response) => void = () => undefined;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve))).mockResolvedValue(respond(200, { list: null }));
+    network.set({ online: false });
+    const running = flush();
+    await mutate("PATCH", "/api/shopping/items/2", { checked: 1 }, { offline: true });
+    release(respond(200, { list: null }));
+    await running;
+    await flush();
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(["/api/shopping/items/1", "/api/shopping/items/2"]);
+    expect(readQueue()).toEqual([]);
+  });
+
+  it("queues a change when the server does not answer in time", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(globalThis, "fetch").mockImplementation(
+        (_input, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+      );
+      const result = mutate("PATCH", "/api/shopping/items/3", { price: 2 }, { offline: true });
+      await vi.advanceTimersByTimeAsync(13000);
+      expect(isQueued(await result)).toBe(true);
+      expect(readQueue()).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

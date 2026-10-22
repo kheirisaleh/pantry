@@ -119,8 +119,14 @@
 :where(body:not(.mobile)) .shop-row.is-checked .ico { filter: grayscale(0.6); opacity: 0.7; }
 :where(body:not(.mobile)) .shop-meta { display: flex; gap: 12px; font-size: var(--s-1); flex-wrap: wrap; }
 :where(body:not(.mobile)) .shop-meta .de { color: var(--sky); }
-:where(body:not(.mobile)) .shop-inputs { display: flex; align-items: center; gap: 8px; }
+:where(body:not(.mobile)) .shop-inputs { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+:where(body:not(.mobile)) .shop-fields { display: flex; align-items: center; gap: 8px; }
 :where(body:not(.mobile)) .shop-inputs .input { width: 84px; min-height: 38px; }
+:where(body:not(.mobile)) .shop-extra { display: flex; align-items: center; gap: 12px; font-size: var(--s-1); }
+:where(body:not(.mobile)) .shop-size { display: flex; align-items: center; gap: 6px; }
+:where(body:not(.mobile)) .shop-size .input { width: 72px; min-height: 32px; }
+:where(body:not(.mobile)) .price-mode { min-width: 68px; white-space: nowrap; }
+:where(body:not(.mobile)) .shop-line-total { color: var(--saffron); font-weight: 700; }
 :where(body:not(.mobile)) .done-block { margin-top: 18px; max-width: 1000px; }
 :where(body:not(.mobile)) .done-block summary { cursor: pointer; padding: 8px 0; }
 :where(body:not(.mobile)) .list-row.done { opacity: 0.7; }
