@@ -67,15 +67,18 @@ export function realId(result: unknown): Id | null {
   return value.item_id ?? value.session_id ?? null;
 }
 
+export const OFFLINE_TIMEOUT_MS = 12000;
+
 export async function mutate<T>(method: Method, path: string, body?: unknown, options: MutateOptions = {}): Promise<T | Queued> {
   const opId = uid();
   const entry: QueueEntry = { method, path, body, opId, user: getApiUser(), ...(options.temp ? { temp: options.temp } : {}) };
   if (options.offline && readQueue().length) {
     enqueue(entry);
+    if (network.get().online) void flush();
     return { queued: true };
   }
   try {
-    return await send<T>(method, path, body, opId);
+    return await send<T>(method, path, body, opId, options.offline ? OFFLINE_TIMEOUT_MS : undefined);
   } catch (error) {
     if (error instanceof ApiError) {
       notify(error.message, true);
@@ -97,19 +100,20 @@ export async function act<T>(method: Method, path: string, body?: unknown): Prom
 
 let flushing = false;
 
+function drop(entry: QueueEntry): void {
+  writeQueue(readQueue().filter((item) => item.opId !== entry.opId));
+}
+
 export async function flush(): Promise<void> {
   if (flushing) return;
-  let items = readQueue();
-  if (!items.length) return;
+  if (!readQueue().length) return;
   flushing = true;
   const temps = storageGet<Record<string, Id>>("temps", {});
   try {
-    while (items.length) {
-      const entry = items[0]!;
+    for (let entry = readQueue()[0]; entry; entry = readQueue()[0]) {
       const { path, body, skip } = rewrite(entry, temps);
       if (skip) {
-        items = items.slice(1);
-        writeQueue(items);
+        drop(entry);
         continue;
       }
       const previous = getApiUser();
@@ -121,8 +125,7 @@ export async function flush(): Promise<void> {
         setApiUser(previous);
         if (error instanceof ApiError) {
           notify("A saved change could not be applied: " + error.message, true);
-          items = items.slice(1);
-          writeQueue(items);
+          drop(entry);
           continue;
         }
         throw error;
@@ -133,8 +136,7 @@ export async function flush(): Promise<void> {
         if (real !== null) temps[entry.temp] = real;
         storageSet("temps", temps);
       }
-      items = items.slice(1);
-      writeQueue(items);
+      drop(entry);
     }
     storageSet("temps", {});
     invalidateAll();

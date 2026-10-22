@@ -46,7 +46,14 @@ function SnackBody({ close }: { close: () => void }) {
       }
     >
       <div className="stack">
-        <IngredientPicker placeholder="Apple, yogurt, maast, Apfel" autoFocus onPick={setPicked} />
+        <IngredientPicker
+          placeholder="Apple, yogurt, maast, Apfel"
+          autoFocus
+          onPick={(next) => {
+            setPicked(next);
+            if (next.ingredient) setUnit(next.ingredient.unit);
+          }}
+        />
         <div className="soft">
           {picked ? (
             <>

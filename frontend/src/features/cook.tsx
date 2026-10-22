@@ -43,7 +43,12 @@ function CookBody({ initial, options, close }: { initial: CookPreview; options: 
     const values: Record<string, number> = {};
     for (const [key, text] of Object.entries(overrides)) {
       const value = parseNumber(text);
-      if (value !== null) values[key] = value;
+      if (value === null || value < 0) {
+        toast("Check the amounts, one of them is not a number", true);
+        setBusy(false);
+        return;
+      }
+      values[key] = value;
     }
     try {
       const result = await act<CookResult>("POST", "/api/cook", {

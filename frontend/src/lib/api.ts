@@ -80,12 +80,30 @@ export async function get<T>(path: string, options: { signal?: AbortSignal } = {
   return (await response.json()) as T;
 }
 
-export async function send<T>(method: Method, path: string, body: unknown, opId: string): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    headers: headers({ "X-Op-Id": opId }),
-    body: body === undefined ? null : JSON.stringify(body),
-  });
+export class TimeoutError extends Error {
+  constructor() {
+    super("The server did not answer in time");
+    this.name = "TimeoutError";
+  }
+}
+
+export async function send<T>(method: Method, path: string, body: unknown, opId: string, timeoutMs?: number): Promise<T> {
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : undefined;
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method,
+      headers: headers({ "X-Op-Id": opId }),
+      body: body === undefined ? null : JSON.stringify(body),
+      signal: controller?.signal ?? null,
+    });
+  } catch (error) {
+    if (controller?.signal.aborted) throw new TimeoutError();
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
   if (!response.ok) throw new ApiError(await errorText(response), response.status);
   setOnline(true);
   return (await response.json()) as T;

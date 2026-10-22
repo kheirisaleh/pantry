@@ -178,9 +178,12 @@ def resolve_or_create(c, text, user_id=None, kind=None):
 def lock_unit(c, ingredient_id, unit):
     if unit not in UNITS:
         return
-    ingredient = db.row("SELECT unit, unit_locked FROM ingredients WHERE id = ?", (ingredient_id,))
-    if ingredient and not ingredient["unit_locked"]:
-        c.execute("UPDATE ingredients SET unit = ?, unit_locked = 1 WHERE id = ?", (unit, ingredient_id))
+    ingredient = db.row("SELECT unit, unit_locked, status FROM ingredients WHERE id = ?", (ingredient_id,))
+    if not ingredient or ingredient["unit_locked"]:
+        return
+    if ingredient["status"] == "ready":
+        unit = ingredient["unit"]
+    c.execute("UPDATE ingredients SET unit = ?, unit_locked = 1 WHERE id = ?", (unit, ingredient_id))
 
 
 def stock_map(include_pending=False):
@@ -885,21 +888,21 @@ def default_servings():
     return float(db.get_setting("default_servings", "2"))
 
 
-def _consume(c, ingredient_id, qty, kind, user_id, meal_id=None):
+def _consume(c, ingredient_id, qty, kind, user_id, meal_id=None, snack_id=None):
     batches = db.rows("SELECT * FROM batches WHERE ingredient_id = ? AND qty_remaining > 0 AND pending_unit IS NULL", (ingredient_id,))
     taken, missing = logic.fifo_consume(batches, qty)
     value = 0.0
     for portion in taken:
         c.execute("UPDATE batches SET qty_remaining = MAX(0, qty_remaining - ?) WHERE id = ?", (portion["qty"], portion["batch_id"]))
         c.execute(
-            "INSERT INTO events(ingredient_id, batch_id, kind, qty, value, meal_id, user_id, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (ingredient_id, portion["batch_id"], kind, portion["qty"], portion["value"], meal_id, user_id, iso_now()),
+            "INSERT INTO events(ingredient_id, batch_id, kind, qty, value, meal_id, snack_id, user_id, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ingredient_id, portion["batch_id"], kind, portion["qty"], portion["value"], meal_id, snack_id, user_id, iso_now()),
         )
         value += portion["value"]
     if missing > logic.EPSILON:
         c.execute(
-            "INSERT INTO events(ingredient_id, batch_id, kind, qty, value, meal_id, user_id, at) VALUES (?, NULL, ?, ?, 0, ?, ?, ?)",
-            (ingredient_id, kind + "_shortfall", missing, meal_id, user_id, iso_now()),
+            "INSERT INTO events(ingredient_id, batch_id, kind, qty, value, meal_id, snack_id, user_id, at) VALUES (?, NULL, ?, ?, 0, ?, ?, ?, ?)",
+            (ingredient_id, kind + "_shortfall", missing, meal_id, snack_id, user_id, iso_now()),
         )
     return value, missing
 
@@ -1084,13 +1087,11 @@ def log_snack(data, user_id=None):
             lock_unit(c, ingredient_id, unit)
             ingredient = db.row("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,))
         qty = logic.to_base(ingredient, qty_input, unit)
-        cost = 0.0
         values = {"kcal": None, "protein": None, "fat": None, "carbs": None, "fiber": None}
         if qty is not None:
-            cost, _ = _consume(c, ingredient_id, qty, "snack", user_id)
             values = logic.nutrients(ingredient, qty)
-        c.execute(
-            "INSERT INTO snacks(ingredient_id, qty, date, user_id, kcal, protein, fat, carbs, fiber, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        snack_id = c.execute(
+            "INSERT INTO snacks(ingredient_id, qty, date, user_id, kcal, protein, fat, carbs, fiber, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
             (
                 ingredient_id,
                 qty if qty is not None else qty_input,
@@ -1101,15 +1102,22 @@ def log_snack(data, user_id=None):
                 values["fat"],
                 values["carbs"],
                 values["fiber"],
-                round(cost, 2),
             ),
-        )
+        ).lastrowid
+        if qty is not None:
+            cost, _ = _consume(c, ingredient_id, qty, "snack", user_id, snack_id=snack_id)
+            c.execute("UPDATE snacks SET cost = ? WHERE id = ?", (round(cost, 2), snack_id))
     return {"ok": True}
 
 
 def delete_snack(snack_id):
     with db.tx() as c:
+        for event in db.rows("SELECT * FROM events WHERE snack_id = ? AND kind = 'snack'", (snack_id,)):
+            if event["batch_id"]:
+                c.execute("UPDATE batches SET qty_remaining = qty_remaining + ? WHERE id = ?", (event["qty"], event["batch_id"]))
+        c.execute("DELETE FROM events WHERE snack_id = ?", (snack_id,))
         c.execute("DELETE FROM snacks WHERE id = ?", (snack_id,))
+        refresh_open_list(c)
 
 
 def add_stock(c, ingredient_id, qty_input, unit, price, store, user_id, source, session_id=None, purchased_at=None):
@@ -1197,7 +1205,7 @@ def waste(ingredient_id, qty=None, unit=None, user_id=None):
         if qty in (None, ""):
             amount = stock_map().get(ingredient_id, 0.0)
         else:
-            amount = logic.to_base(ingredient, positive(qty, "Quantity"), check_unit(unit or ingredient["unit"]))
+            amount = logic.to_base(ingredient, positive(qty, "Quantity"), check_shop_unit(unit or ingredient["unit"]))
             if amount is None:
                 raise ServiceError("This unit cannot be converted for this ingredient yet")
         if amount > 0:
@@ -1207,6 +1215,15 @@ def waste(ingredient_id, qty=None, unit=None, user_id=None):
 
 
 def set_actual(c, ingredient_id, qty, user_id):
+    ingredient = db.row("SELECT unit, status, unit_locked FROM ingredients WHERE id = ?", (ingredient_id,))
+    if ingredient["status"] != "ready" and not ingredient["unit_locked"]:
+        for batch in db.rows(
+            "SELECT id FROM batches WHERE ingredient_id = ? AND pending_unit = ? AND qty_remaining > 0", (ingredient_id, ingredient["unit"])
+        ):
+            c.execute("UPDATE batches SET qty_remaining = 0 WHERE id = ?", (batch["id"],))
+        if float(qty) > logic.EPSILON:
+            add_stock(c, ingredient_id, float(qty), ingredient["unit"], None, None, user_id, "adjust_up")
+        return
     current = stock_map().get(ingredient_id, 0.0)
     difference = float(qty) - current
     if difference < -logic.EPSILON:
