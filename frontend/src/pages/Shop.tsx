@@ -163,6 +163,9 @@ function ShopRow({ item }: { item: ShoppingItem }) {
         <div className="muted shop-meta">
           {ingredient.name_de ? <span className="de">{ingredient.name_de}</span> : null}
           {need ? <span>need {need}</span> : null}
+          {item.unsure_stock?.length ? (
+            <span className="warn">at home {item.unsure_stock.map((entry) => trim(entry.qty, 1) + " " + entry.unit).join(", ")}, size unknown</span>
+          ) : null}
           {source}
         </div>
       </div>

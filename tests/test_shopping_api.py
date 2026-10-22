@@ -200,3 +200,26 @@ def test_session_errors(client):
     second = client.post("/api/shopping/sessions", json={"store": "Edeka"}).json()
     statuses = [session["status"] for session in second["list"]["sessions"]]
     assert statuses == ["paused", "active"]
+
+
+def test_stock_of_unknown_size_keeps_the_item_on_the_list_with_a_note(client, kitchen):
+    recipe = kitchen.recipe("salad", [{"items": [{"name": "panir", "amount": 100, "unit": "g"}]}])
+    kitchen.meal(recipe["id"], 1, servings=2)
+    kitchen.stock("panir", 1, "pcs")
+    built = client.post("/api/shopping/build", json={"start": kitchen.day(0), "end": kitchen.day(1)}).json()["list"]
+    feta = next(item for item in built["items"] if item["ingredient"]["display"] == "Feta cheese")
+    assert feta["needed_qty"] == 200.0
+    assert feta["unsure_stock"] == [{"qty": 1.0, "unit": "pcs"}]
+
+
+def test_adding_an_item_already_on_the_list_ticks_that_row(client, kitchen):
+    planned(kitchen)
+    built = client.post("/api/shopping/build", json={"start": kitchen.day(0), "end": kitchen.day(2)}).json()["list"]
+    rice = next(item for item in built["items"] if item["ingredient"]["display"] == "Basmati rice")
+    session = client.post("/api/shopping/sessions", json={"store": "Aldi"}).json()
+    added = client.post("/api/shopping/items", json={"name": "berenj", "checked": True, "session_id": session["session_id"]}).json()
+    assert added["item_id"] == rice["id"]
+    rows = [item for item in added["list"]["items"] if item["ingredient"]["display"] == "Basmati rice"]
+    assert len(rows) == 1 and rows[0]["checked"] == 1
+    again = client.post("/api/shopping/items", json={"name": "berenj"}).json()
+    assert again["item_id"] != rice["id"]

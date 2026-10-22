@@ -1364,32 +1364,10 @@ def recompute_auto(c, list_id):
     needs = logic.shopping_needs(stock, before, within, ingredients)
     for entry in pending_bought:
         needs.pop(entry["ingredient_id"], None)
-    covered = {
-        row["ingredient_id"] for row in db.rows("SELECT ingredient_id FROM shopping_items WHERE list_id = ? AND checked = 1", (list_id,))
-    }
-    for row in db.rows("SELECT DISTINCT ingredient_id FROM batches WHERE pending_unit IS NOT NULL AND qty_remaining > 0"):
-        covered.add(row["ingredient_id"])
-    unknown = set()
-    for ingredient_id in covered:
-        if ingredient_id not in needs:
-            continue
-        bought = db.rows(
-            "SELECT bought_qty, bought_unit, pack_size FROM shopping_items WHERE list_id = ? AND ingredient_id = ? AND checked = 1",
-            (list_id, ingredient_id),
-        )
-        pending = db.scalar(
-            "SELECT COUNT(*) FROM batches WHERE ingredient_id = ? AND pending_unit IS NOT NULL AND qty_remaining > 0", (ingredient_id,)
-        )
-        ingredient = ingredients.get(ingredient_id) or {}
-        if pending or any(
-            entry["bought_qty"] and bought_base(ingredient, entry["bought_qty"], entry["bought_unit"], entry["pack_size"]) is None
-            for entry in bought
-        ):
-            unknown.add(ingredient_id)
-    for ingredient_id in unknown:
-        needs.pop(ingredient_id, None)
     existing = {}
-    for entry in db.rows("SELECT * FROM shopping_items WHERE list_id = ? AND auto = 1 AND checked = 0 AND committed = 0 ORDER BY id", (list_id,)):
+    for entry in db.rows(
+        "SELECT * FROM shopping_items WHERE list_id = ? AND auto = 1 AND checked = 0 AND committed = 0 ORDER BY id", (list_id,)
+    ):
         if entry["ingredient_id"] in existing:
             c.execute("DELETE FROM shopping_items WHERE id = ?", (entry["id"],))
         else:
@@ -1465,6 +1443,11 @@ def get_list(list_id=None):
     items = db.rows("SELECT * FROM shopping_items WHERE list_id = ? ORDER BY id", (shopping["id"],))
     ingredients = ingredient_map([item["ingredient_id"] for item in items])
     views = [item_view(item, ingredients[item["ingredient_id"]]) for item in items]
+    unsure = {}
+    for entry in pending_stock():
+        unsure.setdefault(entry["ingredient_id"], []).append({"qty": entry["qty"], "unit": entry["pending_unit"]})
+    for view in views:
+        view["unsure_stock"] = unsure.get(view["ingredient_id"], [])
     views.sort(
         key=lambda view: (
             CATEGORY_ORDER.index(view["ingredient"]["category"])
@@ -1501,6 +1484,16 @@ def add_list_item(data, user_id=None):
             ingredient = db.row("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,))
             needed_qty = logic.to_base(ingredient, positive(needed, "Quantity"), check_shop_unit(unit or ingredient["unit"]))
         session_id = data.get("session_id")
+        existing = db.row(
+            "SELECT id, needed_qty FROM shopping_items WHERE list_id = ? AND ingredient_id = ? AND checked = 0 AND committed = 0 ORDER BY id LIMIT 1",
+            (list_id, ingredient_id),
+        )
+        if existing:
+            if needed_qty and not existing["needed_qty"]:
+                c.execute("UPDATE shopping_items SET needed_qty = ? WHERE id = ?", (needed_qty, existing["id"]))
+            if data.get("checked"):
+                _check_item(c, existing["id"], data, user_id)
+            return {"item_id": existing["id"], "list": get_list(list_id)}
         cursor = c.execute(
             "INSERT INTO shopping_items(list_id, ingredient_id, auto, needed_qty, note, added_by, session_id, source) VALUES (?, ?, 0, ?, ?, ?, ?, ?)",
             (

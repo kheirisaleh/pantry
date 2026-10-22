@@ -98,7 +98,7 @@ export function PantryPage() {
                           {item.expiring_estimate ? <span className="chip warn">use soon, roughly by {shortDate(item.expiring_estimate)}</span> : null}
                           {item.pending_stock.map((entry) => (
                             <span key={entry.unit} className="chip">
-                              {trim(entry.qty, 1)} {entry.unit} waiting for conversion
+                              {trim(entry.qty, 1)} {entry.unit} of unknown size, add the size in details
                             </span>
                           ))}
                         </div>

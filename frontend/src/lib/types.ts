@@ -286,6 +286,7 @@ export interface ShoppingItem {
   ingredient: IngredientRef;
   pieces?: number | null;
   packages?: number;
+  unsure_stock?: { qty: number; unit: string }[];
 }
 
 export interface ShoppingSession {
