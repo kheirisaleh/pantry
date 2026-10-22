@@ -19,8 +19,7 @@ def _list_span(shopping):
 
 
 def _trip_date(shopping):
-    finished = db.scalar(
-        "SELECT MIN(finished_at) FROM shopping_sessions WHERE list_id = ? AND finished_at IS NOT NULL", (shopping["id"],))
+    finished = db.scalar("SELECT MIN(finished_at) FROM shopping_sessions WHERE list_id = ? AND finished_at IS NOT NULL", (shopping["id"],))
     started = db.scalar("SELECT MIN(started_at) FROM shopping_sessions WHERE list_id = ?", (shopping["id"],))
     value = finished or started or shopping.get("closed_at")
     return _date_of(value) if value else None
@@ -138,7 +137,13 @@ def status(raise_alerts=True):
         "cookable_now": len(simulation["now"]),
         "meals_left": simulation["meals_left"],
         "recipes_considered": simulation["recipes_considered"],
-        "open_list": {"id": open_shopping["id"], "range_start": open_shopping.get("range_start"), "range_end": open_shopping.get("range_end")} if open_shopping else None,
+        "open_list": {
+            "id": open_shopping["id"],
+            "range_start": open_shopping.get("range_start"),
+            "range_end": open_shopping.get("range_end"),
+        }
+        if open_shopping
+        else None,
         "must_shop": stock_known and simulation["meals_left"] == 0,
         "empty_pantry": not stock_known,
         "cycle": None,
@@ -181,13 +186,33 @@ def status(raise_alerts=True):
             "state": state,
         }
         if raise_alerts and state == "early":
-            _raise_alert("cycle", "cycle-early-" + start.isoformat(), "Food runs out early",
-                         "At this pace the pantry lasts until " + run_out.isoformat() + ", " + str(-difference) + " days before the planned " + str(planned_days) + " days are over.",
-                         {"date": today.isoformat()})
+            _raise_alert(
+                "cycle",
+                "cycle-early-" + start.isoformat(),
+                "Food runs out early",
+                "At this pace the pantry lasts until "
+                + run_out.isoformat()
+                + ", "
+                + str(-difference)
+                + " days before the planned "
+                + str(planned_days)
+                + " days are over.",
+                {"date": today.isoformat()},
+            )
         if raise_alerts and state == "extended":
-            _raise_alert("cycle", "cycle-extended-" + start.isoformat(), "Well done, the shop is stretching",
-                         "You are past the planned " + str(planned_days) + " days and can still cook.", {"date": today.isoformat()})
+            _raise_alert(
+                "cycle",
+                "cycle-extended-" + start.isoformat(),
+                "Well done, the shop is stretching",
+                "You are past the planned " + str(planned_days) + " days and can still cook.",
+                {"date": today.isoformat()},
+            )
     if raise_alerts and result["must_shop"]:
-        _raise_alert("cycle", "must-shop-" + today.isoformat(), "Time to go shopping",
-                     "Nothing in the recipe book can be cooked with what is at home.", {"date": today.isoformat()})
+        _raise_alert(
+            "cycle",
+            "must-shop-" + today.isoformat(),
+            "Time to go shopping",
+            "Nothing in the recipe book can be cooked with what is at home.",
+            {"date": today.isoformat()},
+        )
     return result

@@ -105,7 +105,7 @@ def send_one(subscription, message):
         return None
 
 
-def broadcast(title, body, url="/m/"):
+def broadcast(title, body, url="/m"):
     sent = 0
     for subscription in db.rows("SELECT * FROM push_subscriptions"):
         status = send_one(subscription, {"title": title, "body": body, "url": url})

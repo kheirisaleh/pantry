@@ -1,0 +1,11 @@
+@font-face { font-family: "Bricolage"; font-weight: 500; font-display: swap; src: url("../../node_modules/@fontsource/bricolage-grotesque/files/bricolage-grotesque-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Bricolage"; font-weight: 600; font-display: swap; src: url("../../node_modules/@fontsource/bricolage-grotesque/files/bricolage-grotesque-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Bricolage"; font-weight: 700; font-display: swap; src: url("../../node_modules/@fontsource/bricolage-grotesque/files/bricolage-grotesque-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Bricolage"; font-weight: 800; font-display: swap; src: url("../../node_modules/@fontsource/bricolage-grotesque/files/bricolage-grotesque-latin-800-normal.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-weight: 400; font-display: swap; src: url("../../node_modules/@fontsource/manrope/files/manrope-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-weight: 500; font-display: swap; src: url("../../node_modules/@fontsource/manrope/files/manrope-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-weight: 600; font-display: swap; src: url("../../node_modules/@fontsource/manrope/files/manrope-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-weight: 700; font-display: swap; src: url("../../node_modules/@fontsource/manrope/files/manrope-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Manrope"; font-weight: 800; font-display: swap; src: url("../../node_modules/@fontsource/manrope/files/manrope-latin-800-normal.woff2") format("woff2"); }
+@font-face { font-family: "Vazirmatn"; font-weight: 400; font-display: swap; src: url("../../node_modules/@fontsource/vazirmatn/files/vazirmatn-arabic-400-normal.woff2") format("woff2"); unicode-range: U+0600-06FF, U+200C-200E, U+FB50-FDFF, U+FE70-FEFF; }
+@font-face { font-family: "Vazirmatn"; font-weight: 600; font-display: swap; src: url("../../node_modules/@fontsource/vazirmatn/files/vazirmatn-arabic-600-normal.woff2") format("woff2"); unicode-range: U+0600-06FF, U+200C-200E, U+FB50-FDFF, U+FE70-FEFF; }

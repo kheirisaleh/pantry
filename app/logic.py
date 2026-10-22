@@ -48,7 +48,7 @@ def counts_in_planning(ingredient):
 
 def meal_requirements(meal, items, ingredients):
     choices = meal.get("choices") or {}
-    optional_selected = set(int(value) for value in (meal.get("optional_items") or []))
+    optional_selected = {int(value) for value in (meal.get("optional_items") or [])}
     servings = float(meal.get("servings") or 0)
     by_slot = {}
     for item in items:
@@ -159,21 +159,25 @@ def rank_suggestions(stock, planned_after, candidates):
             tier = 1
         else:
             tier = 0
-        ranked.append(dict(
-            candidate,
-            shortages=shortages,
-            breaks=newly_broken,
-            tier=tier,
-            unconvertible=candidate.get("unconvertible", []),
-        ))
-    ranked.sort(key=lambda entry: (
-        entry["tier"],
-        len(entry["shortages"]),
-        entry["breaks"],
-        0 if entry.get("planned_here") else 1,
-        entry.get("last_cooked") or "",
-        entry.get("name") or "",
-    ))
+        ranked.append(
+            dict(
+                candidate,
+                shortages=shortages,
+                breaks=newly_broken,
+                tier=tier,
+                unconvertible=candidate.get("unconvertible", []),
+            )
+        )
+    ranked.sort(
+        key=lambda entry: (
+            entry["tier"],
+            len(entry["shortages"]),
+            entry["breaks"],
+            0 if entry.get("planned_here") else 1,
+            entry.get("last_cooked") or "",
+            entry.get("name") or "",
+        )
+    )
     return ranked
 
 

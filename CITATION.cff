@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software or its planning rules in your work, please cite it as below."
+title: "Pantry: a self hosted meal planner, pantry and shopping list for the home server"
+abstract: >-
+  Self hosted household app that plans meals from the dishes a household cooks, simulates the stock through the
+  plan, derives a rounded shopping list, costs every meal from first in first out purchase batches and reports
+  nutrition per person. A large language model only classifies and describes ingredients and dishes; its
+  answers are validated against a schema and numeric bounds.
+type: software
+authors:
+  - family-names: Kheiri
+    given-names: Saleh
+repository-code: "https://github.com/kheirisaleh/pantry"
+license: MIT
+keywords:
+  - meal planning
+  - household inventory
+  - grocery list
+  - food cost
+  - nutrition
+  - self hosted
+  - large language models

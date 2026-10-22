@@ -14,12 +14,27 @@ log = logging.getLogger("pantry.ai")
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 CATEGORIES = list(services.CATEGORY_ORDER)
 KINDS = ["food", "snack", "staple", "household"]
-ICON_NAMES = json.load(open(os.path.join(os.path.dirname(__file__), "icon_names.json")))
+with open(os.path.join(os.path.dirname(__file__), "icon_names.json"), encoding="utf-8") as _handle:
+    ICON_NAMES = json.load(_handle)
 CATEGORY_ICONS = {
-    "vegetables": "leafy-green", "fruits": "red-apple", "herbs": "herb", "meat": "cut-of-meat", "poultry": "poultry-leg",
-    "fish": "fish", "dairy": "glass-of-milk", "eggs": "egg", "bakery": "bread", "grains": "sheaf-of-rice", "legumes": "beans",
-    "canned": "canned-food", "frozen": "ice", "condiments": "jar", "snacks": "cookie", "beverages": "cup-with-straw",
-    "household": "basket", "other": "package",
+    "vegetables": "leafy-green",
+    "fruits": "red-apple",
+    "herbs": "herb",
+    "meat": "cut-of-meat",
+    "poultry": "poultry-leg",
+    "fish": "fish",
+    "dairy": "glass-of-milk",
+    "eggs": "egg",
+    "bakery": "bread",
+    "grains": "sheaf-of-rice",
+    "legumes": "beans",
+    "canned": "canned-food",
+    "frozen": "ice",
+    "condiments": "jar",
+    "snacks": "cookie",
+    "beverages": "cup-with-straw",
+    "household": "basket",
+    "other": "package",
 }
 MAX_BACKOFF = 6 * 3600
 
@@ -97,6 +112,15 @@ def _schema(node):
 
 
 _model_blocked = {}
+_model_unavailable = set()
+
+
+def _all_blocked_error():
+    now = time.time()
+    wait = int(min(_model_blocked.values()) - now) + 1
+    if all(name in _model_unavailable for name in models()):
+        return AIError("None of the chosen Gemini models is available. Pick other models in the settings.", retry_after=max(wait, 60))
+    return AIError("Gemini quota reached", retry_after=max(wait, 60))
 
 
 def models():
@@ -135,8 +159,7 @@ def generate(prompt, schema, timeout=90):
     now = time.time()
     available = [name for name in models() if _model_blocked.get(name, 0) <= now]
     if not available:
-        wait = int(min(_model_blocked.values()) - now) + 1
-        raise AIError("Gemini quota reached", retry_after=max(wait, 60))
+        raise _all_blocked_error()
     last_error = None
     body = None
     for name in available:
@@ -152,11 +175,13 @@ def generate(prompt, schema, timeout=90):
             if error.code == 429:
                 wait = _retry_seconds(detail, 600)
                 _model_blocked[name] = time.time() + wait
+                _model_unavailable.discard(name)
                 log.warning("Gemini model %s quota reached, blocked for %s seconds", name, wait)
                 last_error = AIError("Gemini quota reached", retry_after=min(wait, MAX_BACKOFF))
                 continue
             if error.code == 404:
                 _model_blocked[name] = time.time() + 86400
+                _model_unavailable.add(name)
                 last_error = AIError("Gemini model " + name + " not available", retry_after=60)
                 continue
             if error.code >= 500:
@@ -169,9 +194,10 @@ def generate(prompt, schema, timeout=90):
             last_error = AIError("Gemini unreachable: " + str(error), retry_after=300)
             continue
     if body is None:
-        if any(_model_blocked.get(name, 0) > time.time() for name in available) and all(_model_blocked.get(name, 0) > time.time() for name in models()):
-            wait = int(min(_model_blocked.values()) - time.time()) + 1
-            raise AIError("Gemini quota reached", retry_after=max(wait, 60))
+        if any(_model_blocked.get(name, 0) > time.time() for name in available) and all(
+            _model_blocked.get(name, 0) > time.time() for name in models()
+        ):
+            raise _all_blocked_error()
         raise last_error or AIError("Gemini returned no answer", retry_after=600)
     candidates = body.get("candidates") or []
     if not candidates:
@@ -181,6 +207,7 @@ def generate(prompt, schema, timeout=90):
         return json.loads(text)
     except ValueError as error:
         raise AIError("Gemini returned invalid JSON", retry_after=120) from error
+
 
 INGREDIENT_SCHEMA = {
     "type": "object",
@@ -205,8 +232,27 @@ INGREDIENT_SCHEMA = {
         "shelf_days": {"type": "integer"},
         "icon": {"type": "string"},
     },
-    "required": ["understood", "same_as_id", "name_en", "name_fa", "name_de", "aliases", "category", "kind", "unit",
-                 "sold_by_piece", "piece_amount", "kcal", "protein", "fat", "carbs", "fiber", "tolerance_pct", "shelf_days", "icon"],
+    "required": [
+        "understood",
+        "same_as_id",
+        "name_en",
+        "name_fa",
+        "name_de",
+        "aliases",
+        "category",
+        "kind",
+        "unit",
+        "sold_by_piece",
+        "piece_amount",
+        "kcal",
+        "protein",
+        "fat",
+        "carbs",
+        "fiber",
+        "tolerance_pct",
+        "shelf_days",
+        "icon",
+    ],
 }
 
 
@@ -285,8 +331,13 @@ def run_ingredient(ingredient_id):
     nutrition_limit = 2000 if unit == "pcs" else 900
     nutrition = {}
     valid = True
-    for key, limit in (("kcal", nutrition_limit), ("protein", 100 if unit != "pcs" else 500), ("fat", 100 if unit != "pcs" else 500),
-                       ("carbs", 100 if unit != "pcs" else 500), ("fiber", 100 if unit != "pcs" else 200)):
+    for key, limit in (
+        ("kcal", nutrition_limit),
+        ("protein", 100 if unit != "pcs" else 500),
+        ("fat", 100 if unit != "pcs" else 500),
+        ("carbs", 100 if unit != "pcs" else 500),
+        ("fiber", 100 if unit != "pcs" else 200),
+    ):
         value = answer.get(key)
         if not _valid_number(value, 0, limit):
             valid = False
@@ -294,7 +345,7 @@ def run_ingredient(ingredient_id):
     if unit != "pcs" and valid and nutrition["protein"] + nutrition["fat"] + nutrition["carbs"] > 101:
         valid = False
     if not valid:
-        nutrition = {key: None for key in nutrition}
+        nutrition = dict.fromkeys(nutrition)
     tolerance = answer.get("tolerance_pct")
     tolerance = tolerance if _valid_number(tolerance, 0, 50) else 0
     shelf = answer.get("shelf_days")
@@ -305,10 +356,25 @@ def run_ingredient(ingredient_id):
             """UPDATE ingredients SET name_en = ?, name_fa = ?, name_de = ?, category = ?, kind = ?, unit = ?, sold_by_piece = ?,
                piece_amount = ?, kcal = ?, protein = ?, fat = ?, carbs = ?, fiber = ?, tolerance_pct = ?, shelf_days = ?, icon = ?,
                status = 'ready', ai_error = NULL, updated_at = datetime('now') WHERE id = ?""",
-            (answer["name_en"].strip(), (answer.get("name_fa") or "").strip() or None, (answer.get("name_de") or "").strip() or None,
-             answer["category"], answer["kind"], unit, 1 if answer.get("sold_by_piece") else 0, piece,
-             nutrition["kcal"], nutrition["protein"], nutrition["fat"], nutrition["carbs"], nutrition["fiber"],
-             tolerance, shelf, icon, ingredient_id),
+            (
+                answer["name_en"].strip(),
+                (answer.get("name_fa") or "").strip() or None,
+                (answer.get("name_de") or "").strip() or None,
+                answer["category"],
+                answer["kind"],
+                unit,
+                1 if answer.get("sold_by_piece") else 0,
+                piece,
+                nutrition["kcal"],
+                nutrition["protein"],
+                nutrition["fat"],
+                nutrition["carbs"],
+                nutrition["fiber"],
+                tolerance,
+                shelf,
+                icon,
+                ingredient_id,
+            ),
         )
         for alias in [answer["name_en"], answer.get("name_fa"), answer.get("name_de")] + list(answer.get("aliases") or [])[:8]:
             if alias:
@@ -346,21 +412,25 @@ def run_recipe(recipe_id):
         "SELECT ri.amount, ri.unit, i.raw_name, i.name_en FROM recipe_items ri JOIN ingredients i ON i.id = ri.ingredient_id WHERE ri.recipe_id = ? AND ri.is_default = 1",
         (recipe_id,),
     )
-    ingredient_text = ", ".join(str(item["name_en"] or item["raw_name"]) + " " + ("%g" % item["amount"]) + " " + item["unit"] for item in items)
-    prompt = "\n".join([
-        "You describe dishes for a household meal planner. The household is Persian, living in Germany, and types dish names in Persian, Finglish, German or English.",
-        "Dish name as typed: " + json.dumps(recipe["raw_name"], ensure_ascii=False),
-        "Ingredients per person: " + ingredient_text,
-        "Return:",
-        "name_en: the well known English or international name of the dish (keep established Persian dish names in Latin transliteration, for example Loobia Polo, Ghormeh Sabzi).",
-        "name_fa: the dish name in Persian script.",
-        "name_de: the name a German speaker would use for this dish; keep established Persian names in Latin letters, translate generic dishes (for example Hähnchen Pita Sandwich).",
-        "description: two short sentences in English on how it is cooked.",
-        "tags: 2 to 5 lowercase tags from cuisine, meal type and character, for example persian, quick, high protein, vegetarian, rice, stew.",
-        "cook_minutes: realistic total cooking time.",
-        "image_query: a short English description of the dish in two to four plain words, for example 'green bean rice' for loobia polo. name_en must be the commonly used name of the dish, for example 'Loobia Polo'.",
-        "If you cannot identify the dish, set understood to false and still return a neutral English name built from the typed name.",
-    ])
+    ingredient_text = ", ".join(
+        str(item["name_en"] or item["raw_name"]) + " " + ("{:g}".format(item["amount"])) + " " + item["unit"] for item in items
+    )
+    prompt = "\n".join(
+        [
+            "You describe dishes for a household meal planner. The household is Persian, living in Germany, and types dish names in Persian, Finglish, German or English.",
+            "Dish name as typed: " + json.dumps(recipe["raw_name"], ensure_ascii=False),
+            "Ingredients per person: " + ingredient_text,
+            "Return:",
+            "name_en: the well known English or international name of the dish (keep established Persian dish names in Latin transliteration, for example Loobia Polo, Ghormeh Sabzi).",
+            "name_fa: the dish name in Persian script.",
+            "name_de: the name a German speaker would use for this dish; keep established Persian names in Latin letters, translate generic dishes (for example Hähnchen Pita Sandwich).",
+            "description: two short sentences in English on how it is cooked.",
+            "tags: 2 to 5 lowercase tags from cuisine, meal type and character, for example persian, quick, high protein, vegetarian, rice, stew.",
+            "cook_minutes: realistic total cooking time.",
+            "image_query: a short English description of the dish in two to four plain words, for example 'green bean rice' for loobia polo. name_en must be the commonly used name of the dish, for example 'Loobia Polo'.",
+            "If you cannot identify the dish, set understood to false and still return a neutral English name built from the typed name.",
+        ]
+    )
     answer = generate(prompt, RECIPE_SCHEMA)
     tags = [str(tag).strip().lower() for tag in (answer.get("tags") or []) if str(tag).strip()][:6]
     minutes = answer.get("cook_minutes")
@@ -369,9 +439,16 @@ def run_recipe(recipe_id):
         if answer.get("understood"):
             c.execute(
                 "UPDATE recipes SET name_en = ?, name_fa = ?, name_de = ?, description = ?, tags = ?, cook_minutes = ?, image_query = ?, status = 'ready', ai_error = NULL WHERE id = ?",
-                ((answer.get("name_en") or "").strip() or None, (answer.get("name_fa") or "").strip() or None, (answer.get("name_de") or "").strip() or None,
-                 (answer.get("description") or "").strip() or None, json.dumps(tags), minutes,
-                 (answer.get("image_query") or "").strip() or recipe["raw_name"], recipe_id),
+                (
+                    (answer.get("name_en") or "").strip() or None,
+                    (answer.get("name_fa") or "").strip() or None,
+                    (answer.get("name_de") or "").strip() or None,
+                    (answer.get("description") or "").strip() or None,
+                    json.dumps(tags),
+                    minutes,
+                    (answer.get("image_query") or "").strip() or recipe["raw_name"],
+                    recipe_id,
+                ),
             )
         else:
             c.execute(
@@ -419,14 +496,16 @@ def model_status():
     result = []
     for name in models():
         entry = usage.get(name, {})
-        result.append({
-            "name": name,
-            "blocked_seconds": max(0, int(_model_blocked.get(name, 0) - now)),
-            "ok_today": entry.get("ok", 0),
-            "limited_today": entry.get("limited", 0),
-            "failed_today": entry.get("failed", 0),
-            "last_error": _model_errors.get(name),
-        })
+        result.append(
+            {
+                "name": name,
+                "blocked_seconds": max(0, int(_model_blocked.get(name, 0) - now)),
+                "ok_today": entry.get("ok", 0),
+                "limited_today": entry.get("limited", 0),
+                "failed_today": entry.get("failed", 0),
+                "last_error": _model_errors.get(name),
+            }
+        )
     return result
 
 
@@ -447,11 +526,16 @@ def update_settings(data):
         if "api_key" in data:
             db.set_setting("gemini_api_key", (data.get("api_key") or "").strip(), c)
             _model_blocked.clear()
+            _model_unavailable.clear()
             _model_errors.clear()
         if "models" in data:
-            chosen = [entry.strip() for entry in (data.get("models") or []) if entry and entry.strip()]
+            models_value = data.get("models") or []
+            if not isinstance(models_value, list) or not all(isinstance(entry, str) for entry in models_value):
+                raise services.ServiceError("Models must be a list of model names")
+            chosen = [entry.strip() for entry in models_value if entry.strip()]
             db.set_setting("gemini_models", ",".join(chosen), c)
             _model_blocked.clear()
+            _model_unavailable.clear()
         if "enabled" in data:
             db.set_setting("ai_enabled", "1" if data.get("enabled") else "0", c)
     _state["cooldown_until"] = 0
@@ -466,6 +550,7 @@ def test_model(name):
         _call(name, payload, 60)
         _count(name, "ok")
         _model_blocked.pop(name, None)
+        _model_unavailable.discard(name)
         _model_errors.pop(name, None)
         return {"ok": True, "seconds": round(time.time() - started, 1)}
     except urllib.error.HTTPError as error:

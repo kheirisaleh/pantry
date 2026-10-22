@@ -4,7 +4,8 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date as date_type
+from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
@@ -52,8 +53,8 @@ def _load_chain(url):
     chain = x509.load_pem_x509_certificates(pem)
     if not chain:
         raise AlexaRejected("empty certificate chain")
-    from cryptography.x509.verification import PolicyBuilder, Store
     from cryptography.x509 import DNSName
+    from cryptography.x509.verification import PolicyBuilder, Store
 
     verifier = PolicyBuilder().store(Store(_roots())).time(datetime.now(timezone.utc)).build_server_verifier(DNSName("echo-api.amazon.com"))
     verifier.verify(chain[0], chain[1:])
@@ -87,16 +88,12 @@ def verify(headers, body, payload):
         raise AlexaRejected("bad timestamp") from error
     if abs((datetime.now(timezone.utc) - moment).total_seconds()) > MAX_SKEW_SECONDS:
         raise AlexaRejected("stale request")
-    application = (((payload.get("context") or {}).get("System") or {}).get("application") or {}).get("applicationId") \
-        or ((payload.get("session") or {}).get("application") or {}).get("applicationId")
+    application = (((payload.get("context") or {}).get("System") or {}).get("application") or {}).get("applicationId") or (
+        (payload.get("session") or {}).get("application") or {}
+    ).get("applicationId")
     if application != _skill_id():
         raise AlexaRejected("unknown skill")
 
-
-
-from datetime import date as date_type, timedelta
-
-from . import logic
 
 TEXT = {
     "en": {
@@ -141,7 +138,14 @@ TEXT = {
         "for_n": "for {n}",
         "today": "today",
         "tomorrow": "tomorrow",
-        "piece": "piece", "pieces": "pieces", "gram": "grams", "kilo": "kilos", "ml": "milliliters", "liter": "liters", "pack": "pack", "packs": "packs",
+        "piece": "piece",
+        "pieces": "pieces",
+        "gram": "grams",
+        "kilo": "kilos",
+        "ml": "milliliters",
+        "liter": "liters",
+        "pack": "pack",
+        "packs": "packs",
     },
     "de": {
         "welcome": "Hier ist die Speisekammer. Du kannst die Einkaufsliste hören oder ergänzen, ein Gericht planen oder fragen, was geplant ist.",
@@ -185,7 +189,14 @@ TEXT = {
         "for_n": "für {n}",
         "today": "heute",
         "tomorrow": "morgen",
-        "piece": "Stück", "pieces": "Stück", "gram": "Gramm", "kilo": "Kilo", "ml": "Milliliter", "liter": "Liter", "pack": "Packung", "packs": "Packungen",
+        "piece": "Stück",
+        "pieces": "Stück",
+        "gram": "Gramm",
+        "kilo": "Kilo",
+        "ml": "Milliliter",
+        "liter": "Liter",
+        "pack": "Packung",
+        "packs": "Packungen",
     },
 }
 
@@ -195,8 +206,37 @@ UNIT_WORDS = {
     "ml": ["milliliter", "milliliters", "millilitre", "ml"],
     "l": ["liter", "liters", "litre", "litres", "l"],
     "pcs": ["piece", "pieces", "stück", "stueck", "stuck", "pcs", "one", "ones", "mal"],
-    "pack": ["pack", "packs", "package", "packages", "packet", "packets", "packung", "packungen", "packerl", "jar", "jars", "glas", "gläser",
-             "can", "cans", "dose", "dosen", "bottle", "bottles", "flasche", "flaschen", "bag", "bags", "tüte", "tüten", "beutel", "box", "boxes", "karton"],
+    "pack": [
+        "pack",
+        "packs",
+        "package",
+        "packages",
+        "packet",
+        "packets",
+        "packung",
+        "packungen",
+        "packerl",
+        "jar",
+        "jars",
+        "glas",
+        "gläser",
+        "can",
+        "cans",
+        "dose",
+        "dosen",
+        "bottle",
+        "bottles",
+        "flasche",
+        "flaschen",
+        "bag",
+        "bags",
+        "tüte",
+        "tüten",
+        "beutel",
+        "box",
+        "boxes",
+        "karton",
+    ],
 }
 WEEKDAYS = {
     "en": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
@@ -210,7 +250,7 @@ def _lang(payload):
 
 
 def _num(value):
-    return ("%g" % round(value, 1)).replace(".", ",") if False else "%g" % round(value, 1)
+    return "{:g}".format(round(value, 1))
 
 
 def _speak_qty(qty, unit, lang):
@@ -219,7 +259,7 @@ def _speak_qty(qty, unit, lang):
         return _num(qty) + " " + (text["piece"] if qty == 1 else text["pieces"])
     if qty >= 1000:
         return _num(qty / 1000.0) + " " + (text["kilo"] if unit == "g" else text["liter"])
-    return "%g" % round(qty) + " " + (text["gram"] if unit == "g" else text["ml"])
+    return "{:g}".format(round(qty)) + " " + (text["gram"] if unit == "g" else text["ml"])
 
 
 def _join(parts, lang):
@@ -245,7 +285,7 @@ def _ask(text, attributes=None):
 
 def _slot(intent, name):
     slot = (intent.get("slots") or {}).get(name) or {}
-    resolutions = ((slot.get("resolutions") or {}).get("resolutionsPerAuthority") or [])
+    resolutions = (slot.get("resolutions") or {}).get("resolutionsPerAuthority") or []
     for authority in resolutions:
         if (authority.get("status") or {}).get("code") == "ER_SUCCESS_MATCH":
             values = authority.get("values") or []
@@ -328,7 +368,7 @@ def _add_item(item, amount, unit_word, lang, ingredient_id=None):
     unit = _parse_unit(unit_word)
     data = {"ingredient_id": ingredient_id} if ingredient_id else {"name": item}
     ingredient = db.row("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,)) if ingredient_id else None
-    base = (ingredient or {}).get("unit") or "g"
+    base = (ingredient or {}).get("unit")
     spoken = None
     if amount is not None:
         if unit is None and base == "pcs":
@@ -406,7 +446,9 @@ def _day_report(day, lang):
         (day.isoformat(),),
     )
     name = _day_name(day, lang)
-    planned = [_recipe_label(meal, lang) + " " + text["for_n"].format(n=_num(meal["servings"])) for meal in meals if meal["status"] == "planned"]
+    planned = [
+        _recipe_label(meal, lang) + " " + text["for_n"].format(n=_num(meal["servings"])) for meal in meals if meal["status"] == "planned"
+    ]
     cooked = [_recipe_label(meal, lang) for meal in meals if meal["status"] == "cooked"]
     parts = []
     if planned:
@@ -463,7 +505,8 @@ def handle(payload):
         for ingredient_id in pending.get("ids") or []:
             on_list = db.scalar(
                 "SELECT COUNT(*) FROM shopping_items si JOIN shopping_lists sl ON sl.id = si.list_id WHERE si.ingredient_id = ? AND si.checked = 0 AND sl.status = 'open'",
-                (ingredient_id,))
+                (ingredient_id,),
+            )
             if not on_list:
                 services.add_list_item({"ingredient_id": ingredient_id, "source": "alexa"})
         return _response(text["tomorrow_added"])
@@ -485,7 +528,9 @@ def handle(payload):
         unit_word = _slot(intent, "unit")
         if amount is None:
             return _ask(text["how_much"].format(item=pending["label"]), {"pending": pending})
-        ingredient = db.row("SELECT unit FROM ingredients WHERE id = ?", (pending.get("ingredient_id"),)) if pending.get("ingredient_id") else None
+        ingredient = (
+            db.row("SELECT unit FROM ingredients WHERE id = ?", (pending.get("ingredient_id"),)) if pending.get("ingredient_id") else None
+        )
         if not _parse_unit(unit_word) and not (ingredient and ingredient["unit"] == "pcs"):
             return _ask(text["which_unit"].format(amount=_num(amount)), {"pending": dict(pending, step="unit", amount=amount)})
         return _ask(_add_item(pending["item"], amount, unit_word, lang, pending.get("ingredient_id")) + text["anything_else"])
@@ -547,7 +592,10 @@ def handle(payload):
 
     if name == "ListDishesIntent":
         rows = db.rows("SELECT * FROM recipes WHERE archived = 0 ORDER BY COALESCE(name_en, raw_name)")
-        return _ask(text["dishes"].format(count=len(rows), names=_join([_recipe_label(row, lang) for row in rows[:25]], lang)) + text["anything_else"])
+        return _ask(
+            text["dishes"].format(count=len(rows), names=_join([_recipe_label(row, lang) for row in rows[:25]], lang))
+            + text["anything_else"]
+        )
 
     if name == "CheckStockIntent":
         item = _slot(intent, "item")
@@ -560,7 +608,9 @@ def handle(payload):
         label = _ingredient_label(ingredient_id, lang)
         qty = services.stock_map().get(ingredient_id, 0.0)
         if qty <= 0:
-            pending_batches = db.scalar("SELECT COUNT(*) FROM batches WHERE ingredient_id = ? AND qty_remaining > 0 AND pending_unit IS NOT NULL", (ingredient_id,))
+            pending_batches = db.scalar(
+                "SELECT COUNT(*) FROM batches WHERE ingredient_id = ? AND qty_remaining > 0 AND pending_unit IS NOT NULL", (ingredient_id,)
+            )
             spoken = text["have_unknown" if pending_batches else "have_none"].format(item=label)
         else:
             spoken = text["have"].format(qty=_speak_qty(qty, ingredient["unit"], lang), item=label)
@@ -574,7 +624,9 @@ def handle(payload):
         if not recipe_id:
             return _ask(text["unknown_dish"].format(dish=dish, examples=_examples(lang)))
         today = services.today().isoformat()
-        planned = db.row("SELECT id FROM meals WHERE date = ? AND recipe_id = ? AND status = 'planned' ORDER BY position LIMIT 1", (today, recipe_id))
+        planned = db.row(
+            "SELECT id FROM meals WHERE date = ? AND recipe_id = ? AND status = 'planned' ORDER BY position LIMIT 1", (today, recipe_id)
+        )
         result = services.cook({"meal_id": planned["id"]} if planned else {"recipe_id": recipe_id, "date": today})
         label = _recipe_label(db.row("SELECT * FROM recipes WHERE id = ?", (recipe_id,)), lang)
         if result.get("shortfalls"):
@@ -597,37 +649,146 @@ def handle(payload):
 
 UTTERANCES = {
     "en": {
-        "AddItemIntent": ["add {item} to the shopping list", "add {item}", "put {item} on the list", "put {item} on the shopping list",
-                          "we need {item}", "add {amount} {unit} of {item}", "add {amount} {unit} {item}", "add {amount} {item}",
-                          "put {amount} {unit} of {item} on the list", "we need {amount} {unit} of {item}", "buy {item}", "buy {amount} {unit} of {item}"],
-        "AnswerQuantityIntent": ["{amount}", "{amount} {unit}", "{unit}", "{amount} of them", "about {amount} {unit}", "just {amount}", "only {amount} {unit}"],
+        "AddItemIntent": [
+            "add {item} to the shopping list",
+            "add {item}",
+            "put {item} on the list",
+            "put {item} on the shopping list",
+            "we need {item}",
+            "add {amount} {unit} of {item}",
+            "add {amount} {unit} {item}",
+            "add {amount} {item}",
+            "put {amount} {unit} of {item} on the list",
+            "we need {amount} {unit} of {item}",
+            "buy {item}",
+            "buy {amount} {unit} of {item}",
+        ],
+        "AnswerQuantityIntent": [
+            "{amount}",
+            "{amount} {unit}",
+            "{unit}",
+            "{amount} of them",
+            "about {amount} {unit}",
+            "just {amount}",
+            "only {amount} {unit}",
+        ],
         "AnswerDateIntent": ["{date}", "for {date}", "on {date}", "make it {date}"],
-        "ReadListIntent": ["what is on the shopping list", "read the shopping list", "read the list", "what do we need to buy", "what is on the list", "what do I need to buy"],
-        "PlanMealIntent": ["plan {dish}", "plan {dish} for {date}", "plan {dish} on {date}", "add {dish} to the plan", "add {dish} to the plan for {date}",
-                           "put {dish} on {date}", "we will cook {dish} {date}", "cook {dish} on {date}", "plan {dish} for {servings} people on {date}",
-                           "plan {dish} for {date} for {servings} people"],
-        "PlanForDayIntent": ["what is planned for {date}", "what is planned on {date}", "what are we eating {date}", "what do we cook {date}", "what is the plan for {date}"],
-        "TodayPlanIntent": ["what is planned today", "what are we eating today", "what is for dinner", "what is the plan today", "what do we cook today"],
+        "ReadListIntent": [
+            "what is on the shopping list",
+            "read the shopping list",
+            "read the list",
+            "what do we need to buy",
+            "what is on the list",
+            "what do I need to buy",
+        ],
+        "PlanMealIntent": [
+            "plan {dish}",
+            "plan {dish} for {date}",
+            "plan {dish} on {date}",
+            "add {dish} to the plan",
+            "add {dish} to the plan for {date}",
+            "put {dish} on {date}",
+            "we will cook {dish} {date}",
+            "cook {dish} on {date}",
+            "plan {dish} for {servings} people on {date}",
+            "plan {dish} for {date} for {servings} people",
+        ],
+        "PlanForDayIntent": [
+            "what is planned for {date}",
+            "what is planned on {date}",
+            "what are we eating {date}",
+            "what do we cook {date}",
+            "what is the plan for {date}",
+        ],
+        "TodayPlanIntent": [
+            "what is planned today",
+            "what are we eating today",
+            "what is for dinner",
+            "what is the plan today",
+            "what do we cook today",
+        ],
         "ListDishesIntent": ["which dishes do we have", "what dishes do we have", "list our dishes", "what can we cook"],
-        "TomorrowCheckIntent": ["what is missing for tomorrow", "do we have everything for tomorrow", "what do I need for tomorrow", "check tomorrow", "is anything missing for tomorrow"],
-        "CheckStockIntent": ["do we have {item}", "do we still have {item}", "how much {item} do we have", "is there {item}", "how much {item} is left"],
+        "TomorrowCheckIntent": [
+            "what is missing for tomorrow",
+            "do we have everything for tomorrow",
+            "what do I need for tomorrow",
+            "check tomorrow",
+            "is anything missing for tomorrow",
+        ],
+        "CheckStockIntent": [
+            "do we have {item}",
+            "do we still have {item}",
+            "how much {item} do we have",
+            "is there {item}",
+            "how much {item} is left",
+        ],
         "CookedIntent": ["I cooked {dish}", "we cooked {dish}", "I made {dish}", "we made {dish}", "{dish} is cooked"],
         "RanOutIntent": ["we ran out of {item}", "{item} is used up", "we are out of {item}", "{item} is empty", "{item} is finished"],
     },
     "de": {
-        "AddItemIntent": ["setze {item} auf die Einkaufsliste", "setz {item} auf die Liste", "füge {item} hinzu", "füge {item} zur Einkaufsliste hinzu",
-                          "wir brauchen {item}", "setze {amount} {unit} {item} auf die Liste", "füge {amount} {unit} {item} hinzu",
-                          "wir brauchen {amount} {unit} {item}", "kaufe {item}", "kaufe {amount} {unit} {item}", "setze {amount} {item} auf die Liste"],
-        "AnswerQuantityIntent": ["{amount}", "{amount} {unit}", "{unit}", "ungefähr {amount} {unit}", "nur {amount}", "nur {amount} {unit}"],
+        "AddItemIntent": [
+            "setze {item} auf die Einkaufsliste",
+            "setz {item} auf die Liste",
+            "füge {item} hinzu",
+            "füge {item} zur Einkaufsliste hinzu",
+            "wir brauchen {item}",
+            "setze {amount} {unit} {item} auf die Liste",
+            "füge {amount} {unit} {item} hinzu",
+            "wir brauchen {amount} {unit} {item}",
+            "kaufe {item}",
+            "kaufe {amount} {unit} {item}",
+            "setze {amount} {item} auf die Liste",
+        ],
+        "AnswerQuantityIntent": [
+            "{amount}",
+            "{amount} {unit}",
+            "{unit}",
+            "ungefähr {amount} {unit}",
+            "nur {amount}",
+            "nur {amount} {unit}",
+        ],
         "AnswerDateIntent": ["{date}", "für {date}", "am {date}"],
-        "ReadListIntent": ["was steht auf der Einkaufsliste", "lies die Einkaufsliste vor", "lies die Liste vor", "was müssen wir kaufen", "was steht auf der Liste"],
-        "PlanMealIntent": ["plane {dish}", "plane {dish} für {date}", "plane {dish} am {date}", "setze {dish} auf den Plan", "setze {dish} für {date} auf den Plan",
-                           "wir kochen {dish} {date}", "wir kochen {dish} am {date}", "plane {dish} für {servings} Personen am {date}", "plane {dish} für {date} für {servings} Personen"],
-        "PlanForDayIntent": ["was ist für {date} geplant", "was ist am {date} geplant", "was essen wir {date}", "was kochen wir {date}", "was gibt es {date}"],
+        "ReadListIntent": [
+            "was steht auf der Einkaufsliste",
+            "lies die Einkaufsliste vor",
+            "lies die Liste vor",
+            "was müssen wir kaufen",
+            "was steht auf der Liste",
+        ],
+        "PlanMealIntent": [
+            "plane {dish}",
+            "plane {dish} für {date}",
+            "plane {dish} am {date}",
+            "setze {dish} auf den Plan",
+            "setze {dish} für {date} auf den Plan",
+            "wir kochen {dish} {date}",
+            "wir kochen {dish} am {date}",
+            "plane {dish} für {servings} Personen am {date}",
+            "plane {dish} für {date} für {servings} Personen",
+        ],
+        "PlanForDayIntent": [
+            "was ist für {date} geplant",
+            "was ist am {date} geplant",
+            "was essen wir {date}",
+            "was kochen wir {date}",
+            "was gibt es {date}",
+        ],
         "TodayPlanIntent": ["was ist heute geplant", "was essen wir heute", "was gibt es heute", "was kochen wir heute"],
         "ListDishesIntent": ["welche Gerichte haben wir", "was können wir kochen", "nenne unsere Gerichte"],
-        "TomorrowCheckIntent": ["was fehlt für morgen", "haben wir alles für morgen", "was brauche ich für morgen", "prüfe morgen", "fehlt etwas für morgen"],
-        "CheckStockIntent": ["haben wir {item}", "haben wir noch {item}", "wie viel {item} haben wir", "ist noch {item} da", "wie viel {item} ist noch da"],
+        "TomorrowCheckIntent": [
+            "was fehlt für morgen",
+            "haben wir alles für morgen",
+            "was brauche ich für morgen",
+            "prüfe morgen",
+            "fehlt etwas für morgen",
+        ],
+        "CheckStockIntent": [
+            "haben wir {item}",
+            "haben wir noch {item}",
+            "wie viel {item} haben wir",
+            "ist noch {item} da",
+            "wie viel {item} ist noch da",
+        ],
         "CookedIntent": ["ich habe {dish} gekocht", "wir haben {dish} gekocht", "{dish} ist gekocht", "ich habe {dish} gemacht"],
         "RanOutIntent": ["{item} ist leer", "{item} ist alle", "wir haben kein {item} mehr", "{item} ist aufgebraucht"],
     },
@@ -642,14 +803,22 @@ def interaction_model(locale):
     dish_values = []
     for recipe in recipes:
         main = _recipe_label(recipe, lang)
-        synonyms = sorted({value for value in (recipe.get("name_en"), recipe.get("name_de"), recipe.get("raw_name")) if value and value != main})
+        synonyms = sorted(
+            {value for value in (recipe.get("name_en"), recipe.get("name_de"), recipe.get("raw_name")) if value and value != main}
+        )
         dish_values.append({"id": str(recipe["id"]), "name": {"value": main, "synonyms": synonyms}})
     item_values = []
     for ingredient in db.rows("SELECT * FROM ingredients WHERE archived = 0 AND status = 'ready'"):
         main = _ingredient_label(ingredient["id"], lang)
-        aliases = [row["alias"] for row in db.rows("SELECT alias FROM aliases WHERE ingredient_id = ?", (ingredient["id"],))] if _has_alias_table() else []
+        aliases = (
+            [row["alias"] for row in db.rows("SELECT alias FROM aliases WHERE ingredient_id = ?", (ingredient["id"],))]
+            if _has_alias_table()
+            else []
+        )
         candidates = [ingredient.get("name_en"), ingredient.get("name_de"), ingredient.get("raw_name")] + aliases
-        synonyms = sorted({value for value in candidates if value and value != main and not any("\u0600" <= ch <= "\u06ff" for ch in value)})
+        synonyms = sorted(
+            {value for value in candidates if value and value != main and not any("\u0600" <= ch <= "\u06ff" for ch in value)}
+        )
         item_values.append({"id": str(ingredient["id"]), "name": {"value": main, "synonyms": synonyms[:20]}})
     unit_values = []
     for unit, words in UNIT_WORDS.items():
@@ -669,19 +838,35 @@ def interaction_model(locale):
         "CookedIntent": [("dish", "DISH")],
         "RanOutIntent": [("item", "ITEM")],
     }
-    intents = [{"name": name, "samples": UTTERANCES[lang][name], "slots": [{"name": slot, "type": kind} for slot, kind in slot_list]}
-               for name, slot_list in slots.items()]
-    intents += [{"name": name, "samples": []} for name in ("AMAZON.HelpIntent", "AMAZON.StopIntent", "AMAZON.CancelIntent",
-                                                         "AMAZON.NavigateHomeIntent", "AMAZON.YesIntent", "AMAZON.NoIntent", "AMAZON.FallbackIntent")]
-    return {"interactionModel": {"languageModel": {
-        "invocationName": INVOCATION[lang],
-        "intents": intents,
-        "types": [
-            {"name": "DISH", "values": dish_values or [{"name": {"value": "pizza"}}]},
-            {"name": "ITEM", "values": item_values or [{"name": {"value": "milk"}}]},
-            {"name": "UNIT", "values": unit_values},
-        ],
-    }}}
+    intents = [
+        {"name": name, "samples": UTTERANCES[lang][name], "slots": [{"name": slot, "type": kind} for slot, kind in slot_list]}
+        for name, slot_list in slots.items()
+    ]
+    intents += [
+        {"name": name, "samples": []}
+        for name in (
+            "AMAZON.HelpIntent",
+            "AMAZON.StopIntent",
+            "AMAZON.CancelIntent",
+            "AMAZON.NavigateHomeIntent",
+            "AMAZON.YesIntent",
+            "AMAZON.NoIntent",
+            "AMAZON.FallbackIntent",
+        )
+    ]
+    return {
+        "interactionModel": {
+            "languageModel": {
+                "invocationName": INVOCATION[lang],
+                "intents": intents,
+                "types": [
+                    {"name": "DISH", "values": dish_values or [{"name": {"value": "pizza"}}]},
+                    {"name": "ITEM", "values": item_values or [{"name": {"value": "milk"}}]},
+                    {"name": "UNIT", "values": unit_values},
+                ],
+            }
+        }
+    }
 
 
 def _has_alias_table():

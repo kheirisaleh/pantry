@@ -25,9 +25,15 @@ def _get_json(url, headers=None, timeout=20):
 
 def wikimedia(query, limit=8):
     params = {
-        "action": "query", "format": "json", "generator": "search", "gsrnamespace": "6",
-        "gsrsearch": "filetype:bitmap " + query, "gsrlimit": str(limit), "prop": "imageinfo",
-        "iiprop": "url|extmetadata|mime", "iiurlwidth": "900",
+        "action": "query",
+        "format": "json",
+        "generator": "search",
+        "gsrnamespace": "6",
+        "gsrsearch": "filetype:bitmap " + query,
+        "gsrlimit": str(limit),
+        "prop": "imageinfo",
+        "iiprop": "url|extmetadata|mime",
+        "iiurlwidth": "900",
     }
     data = _get_json("https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(params))
     pages = sorted((data.get("query") or {}).get("pages", {}).values(), key=lambda page: page.get("index", 0))
@@ -39,14 +45,16 @@ def wikimedia(query, limit=8):
         meta = info.get("extmetadata") or {}
         author = (meta.get("Artist") or {}).get("value", "")
         license_name = (meta.get("LicenseShortName") or {}).get("value", "")
-        results.append({
-            "url": info.get("thumburl") or info.get("url"),
-            "thumb": info.get("thumburl") or info.get("url"),
-            "source": "Wikimedia Commons",
-            "page": info.get("descriptionurl"),
-            "credit": _strip_tags(author)[:120],
-            "license": license_name,
-        })
+        results.append(
+            {
+                "url": info.get("thumburl") or info.get("url"),
+                "thumb": info.get("thumburl") or info.get("url"),
+                "source": "Wikimedia Commons",
+                "page": info.get("descriptionurl"),
+                "credit": _strip_tags(author)[:120],
+                "license": license_name,
+            }
+        )
     return results
 
 
@@ -151,19 +159,29 @@ def _relevant(title, keywords):
 
 def wikipedia_page(host, title):
     params = {
-        "action": "query", "format": "json", "titles": title, "redirects": "1",
-        "prop": "pageimages", "piprop": "thumbnail", "pithumbsize": "900",
+        "action": "query",
+        "format": "json",
+        "titles": title,
+        "redirects": "1",
+        "prop": "pageimages",
+        "piprop": "thumbnail",
+        "pithumbsize": "900",
     }
     data = _get_json("https://" + host + ".wikipedia.org/w/api.php?" + urllib.parse.urlencode(params))
     results = []
     for page in (data.get("query") or {}).get("pages", {}).values():
         thumb = (page.get("thumbnail") or {}).get("source")
         if thumb and thumb.startswith("https://"):
-            results.append({
-                "url": thumb, "thumb": thumb, "source": "Wikipedia",
-                "page": "https://" + host + ".wikipedia.org/wiki/" + urllib.parse.quote(page.get("title", "")),
-                "credit": "", "license": "Wikimedia Commons",
-            })
+            results.append(
+                {
+                    "url": thumb,
+                    "thumb": thumb,
+                    "source": "Wikipedia",
+                    "page": "https://" + host + ".wikipedia.org/wiki/" + urllib.parse.quote(page.get("title", "")),
+                    "credit": "",
+                    "license": "Wikimedia Commons",
+                }
+            )
     return results
 
 
@@ -175,11 +193,16 @@ def openverse(query, keywords, limit=20):
         url = item.get("url") or ""
         if not url.startswith("https://") or not _relevant(item.get("title", ""), keywords):
             continue
-        results.append({
-            "url": url, "thumb": item.get("thumbnail") or url, "source": "Openverse",
-            "page": item.get("foreign_landing_url"), "credit": (item.get("creator") or "")[:120],
-            "license": ("CC " + (item.get("license") or "")).strip().upper(),
-        })
+        results.append(
+            {
+                "url": url,
+                "thumb": item.get("thumbnail") or url,
+                "source": "Openverse",
+                "page": item.get("foreign_landing_url"),
+                "credit": (item.get("creator") or "")[:120],
+                "license": ("CC " + (item.get("license") or "")).strip().upper(),
+            }
+        )
     return results
 
 
