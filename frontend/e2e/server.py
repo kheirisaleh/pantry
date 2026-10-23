@@ -30,6 +30,7 @@ KNOWN = {
     "tomatoes": dict(name_en="Tomatoes", name_fa="گوجه فرنگی", name_de="Tomaten", category="vegetables", unit="g", sold_by_piece=True, piece_amount=120, kcal=18, protein=1, icon="tomato"),
     "rice": dict(name_en="Basmati rice", name_fa="برنج", name_de="Basmatireis", category="grains", unit="g", kcal=350, protein=7, icon="cooked-rice"),
     "lentils": dict(name_en="Red lentils", name_fa="عدس", name_de="Rote Linsen", category="legumes", unit="g", kcal=340, protein=24, icon="beans"),
+    "tuna": dict(name_en="Tuna", name_fa="تن ماهی", name_de="Thunfisch", category="canned", unit="g", kcal=116, protein=26, icon="package", package_amount=150),
     "milk": dict(name_en="Milk", name_fa="شیر", name_de="Milch", category="dairy", unit="ml", kcal=64, protein=3.4, icon="glass-of-milk"),
 }
 

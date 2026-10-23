@@ -270,6 +270,7 @@ def init():
         "ALTER TABLE shopping_items ADD COLUMN pack_size REAL",
         "ALTER TABLE shopping_items ADD COLUMN unit_price REAL",
         "ALTER TABLE events ADD COLUMN snack_id INTEGER",
+        "ALTER TABLE ingredients ADD COLUMN package_estimate REAL",
     ):
         try:
             connection.execute(statement)

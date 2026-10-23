@@ -68,6 +68,7 @@ export interface IngredientRef extends Named {
   status: "pending" | "ready" | "unresolved";
   piece_amount: number | null;
   package_amount: number | null;
+  package_estimate?: number | null;
   sold_by_piece?: number;
   display: string;
 }
@@ -316,6 +317,9 @@ export interface ReviewLine {
   icon: string | null;
   category: string;
   unit: Unit;
+  piece_amount: number | null;
+  package_amount: number | null;
+  package_estimate?: number | null;
   stock: number;
   needed: number;
 }

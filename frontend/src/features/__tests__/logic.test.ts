@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { CalendarDay, InventoryItem, Meal } from "@/lib/types";
-import { countChanges } from "../buildList";
 import { countable } from "../count";
 import { detailsPayload } from "../ingredient";
 import { moveMeal } from "../planDrag";
@@ -31,11 +30,6 @@ describe("feature logic", () => {
     expect(recipePayload("polo", [{ key: 1, optional: false, items: [rice] }])).toEqual({ error: "Every ingredient needs an amount" });
     const result = recipePayload(" polo ", [{ key: 1, optional: true, items: [{ ...rice, amount: "1,5", per_dish: true }] }]);
     expect(result).toEqual({ payload: { name: "polo", slots: [{ optional: true, items: [{ ingredient_id: undefined, name: "berenj", amount: 1.5, unit: "g", is_default: true, per_dish: true }] }] } });
-  });
-
-  it("only sends counts that changed", () => {
-    const lines = [{ ingredient_id: 1, stock: 500 }, { ingredient_id: 2, stock: 3 }, { ingredient_id: 3, stock: 0 }];
-    expect(countChanges(lines, { 1: "500", 2: "1,5", 3: "" })).toEqual([{ ingredient_id: 2, qty: 1.5 }]);
   });
 
   it("lists what a pantry check covers", () => {

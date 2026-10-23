@@ -1241,6 +1241,38 @@ def set_actual(c, ingredient_id, qty, user_id):
         )
 
 
+def set_size(c, ingredient_id, unit, size):
+    ingredient = db.row("SELECT unit, package_amount, piece_amount FROM ingredients WHERE id = ?", (ingredient_id,))
+    if unit == "pack":
+        field = "package_amount"
+    elif unit == "pcs" and ingredient["unit"] != "pcs":
+        field = "piece_amount"
+    else:
+        return
+    size = round(positive(size, "Size"), 3)
+    if ingredient[field] != size:
+        c.execute("UPDATE ingredients SET " + field + " = ? WHERE id = ?", (size, ingredient_id))
+        convert_pending_batches(c, ingredient_id)
+
+
+def count_entry(c, ingredient_id, qty, unit=None, size=None, user_id=None):
+    ingredient = db.row("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,))
+    unit = check_shop_unit(unit or ingredient["unit"])
+    if size not in (None, ""):
+        set_size(c, ingredient_id, unit, size)
+        ingredient = db.row("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,))
+    base = logic.to_base(ingredient, qty, unit)
+    c.execute("UPDATE batches SET qty_remaining = 0 WHERE ingredient_id = ? AND pending_unit IS NOT NULL", (ingredient_id,))
+    if base is not None:
+        set_actual(c, ingredient_id, base, user_id)
+        return
+    known = stock_map().get(ingredient_id, 0.0)
+    if known > logic.EPSILON:
+        _consume(c, ingredient_id, known, "adjust_down", user_id)
+    if float(qty) > logic.EPSILON:
+        add_stock(c, ingredient_id, float(qty), unit, None, None, user_id, "adjust_up")
+
+
 def stock_count(entries, user_id=None, full=False):
     with db.tx() as c:
         for entry in entries:
@@ -1252,7 +1284,7 @@ def stock_count(entries, user_id=None, full=False):
             qty = amount_or_none(entry.get("qty"), "Quantity")
             if qty is None:
                 raise ServiceError("Quantity is required")
-            set_actual(c, ingredient_id, qty, user_id)
+            count_entry(c, ingredient_id, qty, entry.get("unit"), entry.get("size"), user_id)
         if full:
             db.set_setting("last_stock_count", today().isoformat(), c)
             c.execute("UPDATE alerts SET status = 'resolved' WHERE kind = 'stock_count' AND status = 'open'")
@@ -1282,6 +1314,8 @@ def review(start, end):
             "category": ingredients[key]["category"],
             "unit": ingredients[key]["unit"],
             "piece_amount": ingredients[key].get("piece_amount"),
+            "package_amount": ingredients[key].get("package_amount"),
+            "package_estimate": ingredients[key].get("package_estimate"),
             "stock": stock.get(key, 0.0),
             "needed": qty,
         }
