@@ -223,6 +223,7 @@ INGREDIENT_SCHEMA = {
         "unit": {"type": "string", "enum": ["g", "ml", "pcs"]},
         "sold_by_piece": {"type": "boolean"},
         "piece_amount": {"type": "number"},
+        "package_amount": {"type": "number"},
         "kcal": {"type": "number"},
         "protein": {"type": "number"},
         "fat": {"type": "number"},
@@ -244,6 +245,7 @@ INGREDIENT_SCHEMA = {
         "unit",
         "sold_by_piece",
         "piece_amount",
+        "package_amount",
         "kcal",
         "protein",
         "fat",
@@ -282,10 +284,11 @@ def _ingredient_prompt(ingredient, existing):
         lines.append("   The base unit is already fixed to " + ingredient["unit"] + ", return exactly that unit.")
     lines += [
         "7. sold_by_piece is true when supermarkets sell it per piece although recipes weigh it (lettuce, cucumber, tomato, onion, pepper, eggplant). piece_amount is the typical weight in grams or millilitres of one piece; for unit pcs give the weight of one piece in grams.",
-        "8. Nutrition (kcal, protein, fat, carbs, fiber in grams) per 100 g or 100 ml for g/ml units, per piece for pcs. Use 0 for household items.",
-        "9. tolerance_pct: extra percentage to buy because amounts are uncertain: fresh produce 10 to 20, herbs 20, meat, rice, pasta, dairy 0 to 5.",
-        "10. shelf_days: typical days it keeps at home after buying in normal storage. 0 if unknown.",
-        "11. icon: the best matching icon name from this allowed list, exactly as written: " + ", ".join(ICON_NAMES) + ".",
+        "8. package_amount: what one usual German supermarket pack, can, jar or bottle of this product holds, in grams or millilitres of the base unit (canned tuna 150, pasta 500, milk 1000). For unit pcs give the number of pieces in a usual pack (eggs 10). 0 when it is usually sold loose.",
+        "9. Nutrition (kcal, protein, fat, carbs, fiber in grams) per 100 g or 100 ml for g/ml units, per piece for pcs. Use 0 for household items.",
+        "10. tolerance_pct: extra percentage to buy because amounts are uncertain: fresh produce 10 to 20, herbs 20, meat, rice, pasta, dairy 0 to 5.",
+        "11. shelf_days: typical days it keeps at home after buying in normal storage. 0 if unknown.",
+        "12. icon: the best matching icon name from this allowed list, exactly as written: " + ", ".join(ICON_NAMES) + ".",
     ]
     return "\n".join(lines)
 
@@ -328,6 +331,8 @@ def run_ingredient(ingredient_id):
         raise AIError("Missing English name", retry_after=600)
     piece = answer.get("piece_amount")
     piece = piece if _valid_number(piece, 0.5, 20000) else None
+    package = answer.get("package_amount")
+    package = package if _valid_number(package, 1, 20000) else None
     nutrition_limit = 2000 if unit == "pcs" else 900
     nutrition = {}
     valid = True
@@ -354,7 +359,7 @@ def run_ingredient(ingredient_id):
     with db.tx() as c:
         c.execute(
             """UPDATE ingredients SET name_en = ?, name_fa = ?, name_de = ?, category = ?, kind = ?, unit = ?, sold_by_piece = ?,
-               piece_amount = ?, kcal = ?, protein = ?, fat = ?, carbs = ?, fiber = ?, tolerance_pct = ?, shelf_days = ?, icon = ?,
+               piece_amount = ?, package_estimate = ?, kcal = ?, protein = ?, fat = ?, carbs = ?, fiber = ?, tolerance_pct = ?, shelf_days = ?, icon = ?,
                status = 'ready', ai_error = NULL, updated_at = datetime('now') WHERE id = ?""",
             (
                 answer["name_en"].strip(),
@@ -365,6 +370,7 @@ def run_ingredient(ingredient_id):
                 unit,
                 1 if answer.get("sold_by_piece") else 0,
                 piece,
+                package,
                 nutrition["kcal"],
                 nutrition["protein"],
                 nutrition["fat"],

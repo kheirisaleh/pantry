@@ -110,6 +110,7 @@ CATALOG = {
         tolerance_pct=0,
         shelf_days=14,
         icon="cheese-wedge",
+        package_amount=200,
     ),
     "tokhm morgh": dict(
         name_en="Eggs",

@@ -501,3 +501,12 @@ input[type="checkbox"] { accent-color: var(--saffron); }
   .reel-card, .reel-card .plate, .reel-halo, .ring-arc { transition: none !important; animation: none !important; }
   .reel-card.is-current .plate, .reel-card.is-current .reel-halo, .alarm-cart, .alarm-cart svg, .reel.is-playing .reel-dot.on i::after { animation: none !important; }
 }
+
+.count-row { flex-wrap: wrap; }
+.count-field { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; margin-left: auto; }
+.count-main { display: flex; gap: 6px; }
+.count-main .input { width: 88px; }
+.count-main .count-unit { width: 82px; }
+.count-size { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; font-size: var(--s-1); }
+.count-size .input { width: 76px; min-height: 34px; }
+.count-note { font-size: var(--s-1); max-width: 300px; text-align: right; }

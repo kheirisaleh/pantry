@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { trim } from "@/lib/format";
+import { type CountDraft, countEntries, initialDraft, rememberUnit } from "@/lib/count";
 import { act } from "@/lib/offline";
 import { grouped } from "@/lib/shopping";
 import type { InventoryItem } from "@/lib/types";
 import { IngredientIcon, Names } from "@/ui/common";
 import { openSheet, SheetLayout } from "@/ui/modal";
 import { toast } from "@/ui/toast";
-import { countChanges } from "./buildList";
 import { changed } from "./changed";
+import { CountField } from "./countField";
 
 export function countable(items: InventoryItem[]): InventoryItem[] {
   return items.filter((item) => item.kind !== "staple" && (item.stock > 0 || item.kind === "food"));
@@ -15,14 +15,17 @@ export function countable(items: InventoryItem[]): InventoryItem[] {
 
 function CountBody({ items, close }: { items: InventoryItem[]; close: () => void }) {
   const rows = countable(items);
-  const [typed, setTyped] = useState<Record<number, string>>({});
+  const [initial] = useState<Record<number, CountDraft>>(() => Object.fromEntries(rows.map((item) => [item.id, initialDraft(item)])));
+  const [drafts, setDrafts] = useState<Record<number, CountDraft>>(initial);
 
   async function save() {
-    const entries = countChanges(
-      rows.map((item) => ({ ingredient_id: item.id, stock: item.stock })),
-      typed,
-    );
+    const { entries, error } = countEntries(rows, initial, drafts);
+    if (error) {
+      toast(error, true);
+      return;
+    }
     await act("POST", "/api/inventory/count", { entries, full: true });
+    for (const entry of entries) rememberUnit(entry.ingredient_id, entry.unit);
     close();
     toast("Pantry check saved");
     changed();
@@ -49,22 +52,12 @@ function CountBody({ items, close }: { items: InventoryItem[]; close: () => void
           <div key={group.category}>
             <div className="group-title">{group.category}</div>
             {group.items.map((item) => (
-              <div key={item.id} className="list-row">
+              <div key={item.id} className="list-row count-row">
                 <IngredientIcon ingredient={item} />
                 <div className="grow">
                   <Names entity={item} />
                 </div>
-                <input
-                  className="input num"
-                  inputMode="decimal"
-                  aria-label={item.display + " at home"}
-                  style={{ width: "100px" }}
-                  value={typed[item.id] ?? trim(item.stock, 1)}
-                  onChange={(event) => setTyped({ ...typed, [item.id]: event.target.value })}
-                />
-                <span className="muted" style={{ width: "28px" }}>
-                  {item.unit}
-                </span>
+                <CountField item={item} label={item.display + " at home"} draft={drafts[item.id] ?? initialDraft(item)} onChange={(next) => setDrafts({ ...drafts, [item.id]: next })} />
               </div>
             ))}
           </div>

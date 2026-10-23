@@ -1,7 +1,8 @@
 import { type ReactNode, useState } from "react";
 import { useBoot } from "@/app/session";
 import { get } from "@/lib/api";
-import { money, parseNumber, qty, shortDate, trim } from "@/lib/format";
+import { money, parseNumber, qty, shortDate } from "@/lib/format";
+import { countEntry, initialDraft, rememberUnit } from "@/lib/count";
 import { act } from "@/lib/offline";
 import type { Ingredient, ShopUnit, Unit } from "@/lib/types";
 import { IngredientIcon } from "@/ui/common";
@@ -10,6 +11,7 @@ import { Icon } from "@/ui/icons";
 import { confirmSheet, openSheet, SheetLayout } from "@/ui/modal";
 import { toast } from "@/ui/toast";
 import { changed } from "./changed";
+import { CountField } from "./countField";
 
 export type AdjustMode = "waste" | "count" | "add";
 
@@ -268,23 +270,29 @@ const TITLES: Record<AdjustMode, (name: string) => string> = {
 const ACTIONS: Record<AdjustMode, string> = { waste: "Record waste", count: "Save amount", add: "Add to pantry" };
 
 function AdjustBody({ ingredient, mode, close, onDone }: { ingredient: Ingredient; mode: AdjustMode; close: () => void; onDone?: (() => void) | undefined }) {
-  const [amount, setAmount] = useState(mode === "count" ? trim(ingredient.stock || 0, 1) : "");
+  const [amount, setAmount] = useState("");
   const [unit, setUnit] = useState<string>(ingredient.unit);
   const [price, setPrice] = useState("");
+  const [start] = useState(() => initialDraft(ingredient));
+  const [draft, setDraft] = useState(start);
 
   async function submit() {
     const value = parseNumber(amount);
-    if (amount.trim() && (value === null || value < 0 || (mode !== "count" && value === 0))) {
+    if (mode !== "count" && amount.trim() && (value === null || value <= 0)) {
       toast("The amount is not a number", true);
       return;
     }
     if (mode === "waste") await act("POST", "/api/inventory/" + String(ingredient.id) + "/waste", { qty: value, unit });
     else if (mode === "count") {
-      if (value === null || value < 0) {
-        toast("Enter an amount", true);
+      const { entry, error } = countEntry(ingredient, start, draft);
+      if (error) {
+        toast(error, true);
         return;
       }
-      await act("POST", "/api/inventory/count", { entries: [{ ingredient_id: ingredient.id, qty: value }] });
+      if (entry) {
+        await act("POST", "/api/inventory/count", { entries: [entry] });
+        rememberUnit(ingredient.id, entry.unit);
+      }
     } else {
       if (!value) {
         toast("Enter an amount", true);
@@ -298,7 +306,7 @@ function AdjustBody({ ingredient, mode, close, onDone }: { ingredient: Ingredien
   }
 
   let unitControl: ReactNode;
-  if (mode === "count") unitControl = <span className="muted">{ingredient.unit}</span>;
+  if (mode === "count") unitControl = null;
   else if (mode === "add") unitControl = <ShopUnitSelect<ShopUnit> value={unit as ShopUnit} onChange={setUnit} />;
   else unitControl = <UnitToggle<Unit> value={unit as Unit} onChange={setUnit} />;
 
@@ -318,10 +326,14 @@ function AdjustBody({ ingredient, mode, close, onDone }: { ingredient: Ingredien
       }
     >
       <div className="stack">
-        <div className="row">
-          <input className="input num" inputMode="decimal" aria-label="Amount" placeholder={mode === "waste" ? "all" : ""} value={amount} onChange={(event) => setAmount(event.target.value)} />
-          {unitControl}
-        </div>
+        {mode === "count" ? (
+          <CountField item={ingredient} label="Amount" draft={draft} onChange={setDraft} />
+        ) : (
+          <div className="row">
+            <input className="input num" inputMode="decimal" aria-label="Amount" placeholder={mode === "waste" ? "all" : ""} value={amount} onChange={(event) => setAmount(event.target.value)} />
+            {unitControl}
+          </div>
+        )}
         {mode === "add" ? (
           <label className="field">
             <span>Price in euro</span>

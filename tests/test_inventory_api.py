@@ -122,3 +122,68 @@ def test_deleting_a_snack_puts_it_back(client, kitchen):
     client.delete("/api/snacks/" + str(snack))
     assert services.stock_map()[apple] == 5.0
     assert db.scalar("SELECT COUNT(*) FROM events WHERE kind = 'snack'") == 0
+
+
+def count(client, ingredient_id, qty, unit=None, size=None):
+    entry = {"ingredient_id": ingredient_id, "qty": qty}
+    if unit:
+        entry["unit"] = unit
+    if size is not None:
+        entry["size"] = size
+    response = client.post("/api/inventory/count", json={"entries": [entry], "full": True})
+    assert response.status_code == 200, response.text
+
+
+def test_count_in_packs_of_a_known_size(client, kitchen):
+    kitchen.stock("panir", 300)
+    feta = kitchen.ingredient_id("Feta cheese")
+    with db.tx() as c:
+        c.execute("UPDATE ingredients SET package_amount = 200 WHERE id = ?", (feta,))
+    count(client, feta, 4, "pack")
+    assert services.stock_map()[feta] == 800.0
+    count(client, feta, 0.5, "kg")
+    assert services.stock_map()[feta] == 500.0
+
+
+def test_count_in_packs_teaches_the_pack_size(client, kitchen):
+    kitchen.stock("panir", 300)
+    feta = kitchen.ingredient_id("Feta cheese")
+    count(client, feta, 4, "pack", size=150)
+    assert services.stock_map()[feta] == 600.0
+    assert db.scalar("SELECT package_amount FROM ingredients WHERE id = ?", (feta,)) == 150.0
+    count(client, feta, 2, "pack")
+    assert services.stock_map()[feta] == 300.0
+
+
+def test_count_of_unknown_size_replaces_stock_and_keeps_the_item_on_the_list(client, kitchen):
+    recipe = kitchen.recipe("salad", [{"items": [{"name": "panir", "amount": 100, "unit": "g"}]}])
+    kitchen.meal(recipe["id"], 1, servings=2)
+    kitchen.stock("panir", 300)
+    feta = kitchen.ingredient_id("Feta cheese")
+    count(client, feta, 4, "pack")
+    assert services.stock_map().get(feta, 0.0) == 0.0
+    assert services.pending_stock() == [{"ingredient_id": feta, "pending_unit": "pack", "qty": 4.0}]
+    built = client.post("/api/shopping/build", json={"start": kitchen.day(0), "end": kitchen.day(1)}).json()["list"]
+    item = next(entry for entry in built["items"] if entry["ingredient"]["display"] == "Feta cheese")
+    assert item["unsure_stock"] == [{"qty": 4.0, "unit": "pack"}]
+    count(client, feta, 3, "pack")
+    assert services.pending_stock() == [{"ingredient_id": feta, "pending_unit": "pack", "qty": 3.0}]
+    client.patch("/api/ingredients/" + str(feta), json={"package_amount": 200})
+    assert services.stock_map()[feta] == 600.0
+    assert services.pending_stock() == []
+    built = client.get("/api/shopping").json()["list"]
+    assert "Feta cheese" not in [entry["ingredient"]["display"] for entry in built["items"]]
+
+
+def test_count_rejects_a_bad_size(client, kitchen):
+    kitchen.stock("panir", 300)
+    feta = kitchen.ingredient_id("Feta cheese")
+    response = client.post("/api/inventory/count", json={"entries": [{"ingredient_id": feta, "qty": 2, "unit": "pack", "size": 0}]})
+    assert response.status_code == 400
+    assert services.stock_map()[feta] == 300.0
+
+
+def test_the_assistant_suggests_a_pack_size_without_using_it(client, kitchen):
+    kitchen.ingredient("panir")
+    row = db.row("SELECT package_amount, package_estimate FROM ingredients WHERE name_en = 'Feta cheese'")
+    assert row["package_amount"] is None and row["package_estimate"] == 200
